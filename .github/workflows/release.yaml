@@ -1,0 +1,18 @@
+name: Release
+on:
+  push:
+    tags:
+      - 'v*'
+permissions:
+  contents: write
+  packages: write
+jobs:
+  build:
+    uses: ./.github/workflows/build.yaml
+    with:
+      tags: "type=semver,pattern={{version}}"
+  release:
+    needs:
+      - build
+    uses: clambin/workflows/.github/workflows/release.yaml@main
+

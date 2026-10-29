@@ -1,0 +1,25 @@
+name: Build
+on:
+  push:
+    branches:
+      - main
+  workflow_call:
+    inputs:
+      tags:
+        type: string
+        required: false
+        default: |
+          type=sha
+permissions:
+  contents: read
+  packages: write
+jobs:
+  test:
+    uses: ./.github/workflows/test.yaml
+  build:
+    needs:
+      - test
+    uses: clambin/workflows/.github/workflows/build.yaml@main
+    with:
+      image: ghcr.io/clambin/redis-controller
+      tags: "${{ inputs.tags || 'type=sha' }}"

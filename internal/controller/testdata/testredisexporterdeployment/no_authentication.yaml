@@ -1,0 +1,33 @@
+metadata:
+  labels:
+    app.kubernetes.io/name: test-exporter
+  name: test-exporter
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: test-exporter
+  strategy: {}
+  template:
+    metadata:
+      annotations:
+        prometheus.io/port: "9121"
+        prometheus.io/scrape: "true"
+      labels:
+        app.kubernetes.io/name: test-exporter
+    spec:
+      containers:
+      - args:
+        - -redis.addr=redis://test:6379
+        image: foo
+        imagePullPolicy: Always
+        name: redis-exporter
+        ports:
+        - containerPort: 9121
+          name: metrics
+          protocol: TCP
+        resources: {}
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+status: {}

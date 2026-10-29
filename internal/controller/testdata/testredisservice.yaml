@@ -1,0 +1,16 @@
+metadata:
+  labels:
+    app.kubernetes.io/name: test
+  name: test
+  namespace: default
+spec:
+  ports:
+  - name: tcp-redis
+    port: 6379
+    protocol: TCP
+    targetPort: 6379
+  selector:
+    app.kubernetes.io/name: test
+  type: ClusterIP
+status:
+  loadBalancer: {}
