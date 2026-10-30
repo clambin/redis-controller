@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/google/go-cmp/cmp"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -75,11 +74,13 @@ func (r *RedisInstanceReconciler) Reconcile(ctx context.Context, req reconcile.R
 func (r *RedisInstanceReconciler) reconcileChild(ctx context.Context, redis *cachev1alpha1.Instance, kind string, obj client.Object, mutate func()) error {
 	log := ctrl.LoggerFrom(ctx).WithValues("kind", kind, "name", obj.GetName())
 	op, err := controllerutil.CreateOrPatch(ctx, r.Client, obj, func() error {
-		before := obj.DeepCopyObject()
+		//before := obj.DeepCopyObject()
 		mutate()
-		if diff := cmp.Diff(before, obj); diff != "" {
-			log.V(1).Info("Child resource mutation", "diff", diff)
-		}
+		/*
+			if diff := cmp.Diff(before, obj); diff != "" {
+				log.V(4).Info("Child resource mutation", "diff", diff)
+			}
+		*/
 		return controllerutil.SetControllerReference(redis, obj, r.Scheme)
 	})
 	if err != nil {
@@ -88,7 +89,7 @@ func (r *RedisInstanceReconciler) reconcileChild(ctx context.Context, redis *cac
 	if op != controllerutil.OperationResultNone {
 		log.Info("Child resource reconciled", "operation", op)
 	} else {
-		log.V(1).Info("Child resource already up to date")
+		log.V(4).Info("Child resource already up to date")
 	}
 	return nil
 }
