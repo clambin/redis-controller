@@ -28,7 +28,8 @@ const (
 	passwordEnvVar    = "REDIS_PASSWORD"
 )
 
-// RedisInstanceReconciler ensures that each RedisInstance has a Deployment and Service.
+// RedisInstanceReconciler ensures that each RedisInstance has a Redis workload (a Deployment, or a StatefulSet
+// when persistence is requested), a Service and, optionally, an exporter Deployment.
 type RedisInstanceReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
@@ -43,81 +44,81 @@ func (r *RedisInstanceReconciler) Reconcile(ctx context.Context, req reconcile.R
 		return reconcile.Result{}, client.IgnoreNotFound(err)
 	}
 
-	result, i, err := r.reconcile(ctx, req, &redis)
-	if err == nil {
-		err = r.updateStatus(ctx, &redis, i.Status())
-	}
-	return result, err
-}
-
-// reconcile reads the RedisInstance and converges its child resources to the desired state.
-func (r *RedisInstanceReconciler) reconcile(ctx context.Context, req reconcile.Request, redis *cachev1alpha1.Instance) (reconcile.Result, servers, error) {
 	log := ctrl.LoggerFrom(ctx).WithValues("instance", req.NamespacedName)
 	ctx = ctrl.LoggerInto(ctx, log)
 	log.Info("Reconciling RedisInstance")
 
+	result, srvrs, err := r.reconcile(ctx, &redis)
+	if err == nil {
+		err = r.updateStatus(ctx, &redis, srvrs.Status())
+	}
+	return result, err
+}
+
+// reconcile converges the child resources of the RedisInstance to the desired state.
+func (r *RedisInstanceReconciler) reconcile(ctx context.Context, redis *cachev1alpha1.Instance) (reconcile.Result, servers, error) {
 	if redis.Spec.Image == "" {
 		return reconcile.Result{}, servers{}, fmt.Errorf("spec.image must not be empty")
 	}
 
-	// reconcile redis instance. if no persistence is specified, use deployment; otherwise use statefulSet
-	result, redisServer, err := r.reconcileRedisServer(ctx, redis)
+	result, server, err := r.reconcileRedisServer(ctx, redis)
 	if err != nil || !result.IsZero() {
 		return result, servers{}, err
 	}
-	srvrs := servers{server: redisServer}
 
-	// reconcile service
 	svc := &corev1.Service{Name: redis.Name, Namespace: redis.Namespace}
 	if err = r.reconcileChild(ctx, redis, "service", svc, func() { redisService(svc, redis) }); err != nil {
 		return reconcile.Result{}, servers{}, err
 	}
-	// reconcile exporter
-	result, srvrs.exporter, err = r.reconcileExporter(ctx, redis)
-	return result, srvrs, err
+
+	exporter, err := r.reconcileExporter(ctx, redis)
+	if err != nil {
+		return reconcile.Result{}, servers{}, err
+	}
+	return reconcile.Result{}, servers{server: server, exporter: exporter}, nil
 }
 
+// reconcileRedisServer runs redis as a Deployment, or as a StatefulSet when persistence is requested.
+// Any workload of the other kind is removed first; while that is in progress, reconciliation is re-queued.
 func (r *RedisInstanceReconciler) reconcileRedisServer(ctx context.Context, redis *cachev1alpha1.Instance) (reconcile.Result, client.Object, error) {
-	var newServer, oldServer client.Object
-	var mutater func()
+	var server, obsolete client.Object
+	var mutate func()
 	var kind string
 
 	if redis.Spec.Persistence == nil {
-		newServer = &appsv1.Deployment{Name: redis.Name, Namespace: redis.Namespace}
-		oldServer = &appsv1.StatefulSet{Name: redis.Name, Namespace: redis.Namespace}
-		mutater = func() { redisDeployment(newServer.(*appsv1.Deployment), redis) }
-		kind = "redis deployment"
+		dep := &appsv1.Deployment{Name: redis.Name, Namespace: redis.Namespace}
+		server, mutate, kind = dep, func() { redisDeployment(dep, redis) }, "redis deployment"
+		obsolete = &appsv1.StatefulSet{Name: redis.Name, Namespace: redis.Namespace}
 	} else {
-		newServer = &appsv1.StatefulSet{Name: redis.Name, Namespace: redis.Namespace}
-		oldServer = &appsv1.Deployment{Name: redis.Name, Namespace: redis.Namespace}
-		mutater = func() { redisStatefulSet(newServer.(*appsv1.StatefulSet), redis) }
-		kind = "redis statefulSet"
+		sfs := &appsv1.StatefulSet{Name: redis.Name, Namespace: redis.Namespace}
+		server, mutate, kind = sfs, func() { redisStatefulSet(sfs, redis) }, "redis statefulSet"
+		obsolete = &appsv1.Deployment{Name: redis.Name, Namespace: redis.Namespace}
 	}
 
-	// depending on the workload type, remove any obsolete deployment or statefulSet
-	if gone, err := r.removeObsolete(ctx, redis, oldServer); err != nil || !gone {
-		return reconcile.Result{RequeueAfter: 5 * time.Second}, nil, err
+	if gone, err := r.removeObsolete(ctx, redis, obsolete); err != nil || !gone {
+		if err != nil {
+			return reconcile.Result{}, nil, err
+		}
+		return reconcile.Result{RequeueAfter: 5 * time.Second}, nil, nil
 	}
 
-	if err := r.reconcileChild(ctx, redis, kind, newServer, mutater); err != nil {
-		return reconcile.Result{RequeueAfter: 5 * time.Second}, nil, err
+	if err := r.reconcileChild(ctx, redis, kind, server, mutate); err != nil {
+		return reconcile.Result{}, nil, err
 	}
-	return reconcile.Result{}, newServer, nil
+	return reconcile.Result{}, server, nil
 }
 
-func (r *RedisInstanceReconciler) reconcileExporter(ctx context.Context, redis *cachev1alpha1.Instance) (reconcile.Result, *appsv1.Deployment, error) {
+// reconcileExporter creates or patches the exporter deployment. If no exporter is requested, any existing one is removed.
+func (r *RedisInstanceReconciler) reconcileExporter(ctx context.Context, redis *cachev1alpha1.Instance) (*appsv1.Deployment, error) {
 	exporter := &appsv1.Deployment{Name: exporterName(redis), Namespace: redis.Namespace}
-	// if no exporter is specified, remove any obsolete deployment
 	if redis.Spec.Exporter == nil {
 		_, err := r.removeObsolete(ctx, redis, exporter)
-		return reconcile.Result{}, nil, client.IgnoreNotFound(err)
+		return nil, err
 	}
-	// reconcile exporter deployment
-	err := r.reconcileChild(ctx, redis, "exporter deployment", exporter, func() { redisExporterDeployment(exporter, redis) })
-	if err != nil {
-		exporter = nil
+	if err := r.reconcileChild(ctx, redis, "exporter deployment", exporter, func() { redisExporterDeployment(exporter, redis) }); err != nil {
+		return nil, err
 	}
-	return reconcile.Result{}, exporter, err
+	return exporter, nil
 }
 
 // removeObsolete deletes the child of the other workload kind. It reports true only when that child is gone.
@@ -182,25 +183,24 @@ func redisDeployment(dep *appsv1.Deployment, redis *cachev1alpha1.Instance) {
 	dep.Labels = labels(redis.Name)
 	dep.Spec.Replicas = new(int32(1))
 	dep.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels(redis.Name)}
-	dep.Spec.Template.Labels = labels(redis.Name)
-	dep.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyAlways
-	dep.Spec.Template.Spec.Containers = []corev1.Container{redisContainer(redis)}
-	// if persistence is required, mount the volume as per the crd's configuration
-	if redis.Spec.Persistence != nil {
-		dep.Spec.Template.Spec.Volumes = []corev1.Volume{{Name: "redis-data", VolumeSource: *redis.Spec.Persistence}}
-	}
+	redisPodTemplate(&dep.Spec.Template, redis)
 }
 
 func redisStatefulSet(sfs *appsv1.StatefulSet, redis *cachev1alpha1.Instance) {
 	sfs.Labels = labels(redis.Name)
 	sfs.Spec.Replicas = new(int32(1))
 	sfs.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels(redis.Name)}
-	sfs.Spec.Template.Labels = labels(redis.Name)
-	sfs.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyAlways
-	sfs.Spec.Template.Spec.Containers = []corev1.Container{redisContainer(redis)}
+	redisPodTemplate(&sfs.Spec.Template, redis)
+}
+
+// redisPodTemplate sets the desired state on the pod template in place, so server-side defaults are preserved.
+func redisPodTemplate(tpl *corev1.PodTemplateSpec, redis *cachev1alpha1.Instance) {
+	tpl.Labels = labels(redis.Name)
+	tpl.Spec.RestartPolicy = corev1.RestartPolicyAlways
+	tpl.Spec.Containers = []corev1.Container{redisContainer(redis)}
 	// if persistence is required, mount the volume as per the crd's configuration
 	if redis.Spec.Persistence != nil {
-		sfs.Spec.Template.Spec.Volumes = []corev1.Volume{{Name: "redis-data", VolumeSource: *redis.Spec.Persistence}}
+		tpl.Spec.Volumes = []corev1.Volume{{Name: "redis-data", VolumeSource: *redis.Spec.Persistence}}
 	}
 }
 
@@ -309,7 +309,6 @@ func (s servers) Status() cachev1alpha1.Status {
 	default:
 		return cachev1alpha1.Status{Ready: true, Message: "Redis instance is ready"}
 	}
-
 }
 
 func isReady(srv client.Object) bool {
