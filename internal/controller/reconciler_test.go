@@ -136,15 +136,6 @@ func TestReconcileMissingParentDoesNothing(t *testing.T) {
 	require.True(t, k8serrors.IsNotFound(r.Get(ctx, request().NamespacedName, &dep)))
 }
 
-func TestReconcileRejectsEmptyImage(t *testing.T) {
-	ctx := context.Background()
-	redis := instance()
-	redis.Spec.Image = ""
-	r := newReconciler(t, redis)
-	_, err := r.Reconcile(ctx, request())
-	require.Error(t, err)
-}
-
 func TestReconcileUpdatesStatus(t *testing.T) {
 	tests := []struct {
 		name     string

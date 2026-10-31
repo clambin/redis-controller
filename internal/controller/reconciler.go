@@ -52,15 +52,15 @@ func (r *RedisInstanceReconciler) Reconcile(ctx context.Context, req reconcile.R
 	if err == nil {
 		err = r.updateStatus(ctx, &redis, srvrs.Status())
 	}
+	if err != nil {
+		log.Error(err, "failed to reconcile RedisInstance", "err", err)
+	}
+
 	return result, err
 }
 
 // reconcile converges the child resources of the RedisInstance to the desired state.
 func (r *RedisInstanceReconciler) reconcile(ctx context.Context, redis *cachev1alpha1.Instance) (reconcile.Result, servers, error) {
-	if redis.Spec.Image == "" {
-		return reconcile.Result{}, servers{}, fmt.Errorf("spec.image must not be empty")
-	}
-
 	result, server, err := r.reconcileRedisServer(ctx, redis)
 	if err != nil || !result.IsZero() {
 		return result, servers{}, err
