@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -54,11 +55,19 @@ func (r *RedisInstanceReconciler) Reconcile(ctx context.Context, req reconcile.R
 	var dep *appsv1.Deployment
 	var sfs *appsv1.StatefulSet
 	if redis.Spec.Persistence == nil {
+		// remove the statefulset left over from persistent mode before creating the deployment
+		if gone, err := r.removeObsolete(ctx, &redis, &appsv1.StatefulSet{}); err != nil || !gone {
+			return reconcile.Result{RequeueAfter: 5 * time.Second}, err
+		}
 		dep = &appsv1.Deployment{Name: redis.Name, Namespace: redis.Namespace}
 		if err := r.reconcileChild(ctx, &redis, "deployment", dep, func() { redisDeployment(dep, &redis) }); err != nil {
 			return reconcile.Result{}, err
 		}
 	} else {
+		// remove the deployment left over from non-persistent mode before creating the statefulset
+		if gone, err := r.removeObsolete(ctx, &redis, &appsv1.Deployment{}); err != nil || !gone {
+			return reconcile.Result{RequeueAfter: 5 * time.Second}, err
+		}
 		sfs = &appsv1.StatefulSet{Name: redis.Name, Namespace: redis.Namespace}
 		if err := r.reconcileChild(ctx, &redis, "statefulset", sfs, func() { redisStatefulSet(sfs, &redis) }); err != nil {
 			return reconcile.Result{}, err
@@ -79,6 +88,23 @@ func (r *RedisInstanceReconciler) Reconcile(ctx context.Context, req reconcile.R
 	}
 
 	return reconcile.Result{}, r.updateStatus(ctx, &redis, instanceStatus(dep, sfs, exporter))
+}
+
+// removeObsolete deletes the child of the other workload kind. It reports true only when that child is gone.
+func (r *RedisInstanceReconciler) removeObsolete(ctx context.Context, redis *cachev1alpha1.Instance, obj client.Object) (bool, error) {
+	key := client.ObjectKey{Name: redis.Name, Namespace: redis.Namespace}
+	if err := r.Get(ctx, key, obj); err != nil {
+		return true, client.IgnoreNotFound(err)
+	}
+	if !metav1.IsControlledBy(obj, redis) {
+		return false, fmt.Errorf("%T %s is not controlled by this instance", obj, key)
+	}
+	if obj.GetDeletionTimestamp() == nil {
+		if err := r.Delete(ctx, obj, client.PropagationPolicy(metav1.DeletePropagationForeground)); client.IgnoreNotFound(err) != nil {
+			return false, err
+		}
+	}
+	return false, nil
 }
 
 // reconcileChild creates or patches a child resource of the RedisInstance. mutate sets the desired state on obj.

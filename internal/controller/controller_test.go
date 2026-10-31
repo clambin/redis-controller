@@ -205,6 +205,42 @@ func TestReconcileUpdatesStatus(t *testing.T) {
 	}
 }
 
+func TestRedisInstanceReconciler_Reconcile_SwitchPersistence(t *testing.T) {
+	ctx := context.Background()
+	redis := instance()
+	r := newReconciler(t, redis)
+
+	// reconcile without persistence
+	_, err := r.Reconcile(ctx, request())
+	require.NoError(t, err)
+
+	// after reconciliation, there should be a deployment and no statefulSet
+	var dep appsv1.Deployment
+	require.NoError(t, r.Get(ctx, request().NamespacedName, &dep))
+	var sfs appsv1.StatefulSet
+	require.Error(t, r.Get(ctx, request().NamespacedName, &sfs))
+
+	// ask for persistence
+	var updated cachev1alpha1.Instance
+	require.NoError(t, r.Get(ctx, request().NamespacedName, &updated))
+	updated.Spec.Persistence = &corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}
+	require.NoError(t, r.Update(ctx, &updated))
+
+	// first reconcile with persistence removes the deployment and requeues
+	result, err := r.Reconcile(ctx, request())
+	require.NoError(t, err)
+	require.NotZero(t, result.RequeueAfter)
+	require.Error(t, r.Get(ctx, request().NamespacedName, &appsv1.Deployment{}))
+
+	// next reconcile creates the statefulSet
+	_, err = r.Reconcile(ctx, request())
+	require.NoError(t, err)
+
+	// after reconciliation, there should be a statefulSet and no deployment
+	require.Error(t, r.Get(ctx, request().NamespacedName, &appsv1.Deployment{}))
+	require.NoError(t, r.Get(ctx, request().NamespacedName, &sfs))
+}
+
 func TestInstanceStatus(t *testing.T) {
 	depReady := &appsv1.Deployment{Status: appsv1.DeploymentStatus{UpdatedReplicas: 1, AvailableReplicas: 1}}
 	depNotReady := &appsv1.Deployment{}
