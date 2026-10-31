@@ -50,15 +50,26 @@ func (r *RedisInstanceReconciler) Reconcile(ctx context.Context, req reconcile.R
 		return reconcile.Result{}, fmt.Errorf("spec.image must not be empty")
 	}
 
-	// After reconciliation, each child holds the latest state from the API server, including its status.
-	dep := &appsv1.Deployment{Name: redis.Name, Namespace: redis.Namespace}
-	if err := r.reconcileChild(ctx, &redis, "deployment", dep, func() { redisDeployment(dep, &redis) }); err != nil {
-		return reconcile.Result{}, err
+	// reconcile redis instance. if no persistence is specified, use deployment; otherwise use statefulSet
+	var dep *appsv1.Deployment
+	var sfs *appsv1.StatefulSet
+	if redis.Spec.Persistence == nil {
+		dep = &appsv1.Deployment{Name: redis.Name, Namespace: redis.Namespace}
+		if err := r.reconcileChild(ctx, &redis, "deployment", dep, func() { redisDeployment(dep, &redis) }); err != nil {
+			return reconcile.Result{}, err
+		}
+	} else {
+		sfs = &appsv1.StatefulSet{Name: redis.Name, Namespace: redis.Namespace}
+		if err := r.reconcileChild(ctx, &redis, "statefulset", sfs, func() { redisStatefulSet(sfs, &redis) }); err != nil {
+			return reconcile.Result{}, err
+		}
 	}
+	// reconcile service
 	svc := &corev1.Service{Name: redis.Name, Namespace: redis.Namespace}
 	if err := r.reconcileChild(ctx, &redis, "service", svc, func() { redisService(svc, &redis) }); err != nil {
 		return reconcile.Result{}, err
 	}
+	// reconcile exporter
 	var exporter *appsv1.Deployment
 	if redis.Spec.Exporter != nil {
 		exporter = &appsv1.Deployment{Name: exporterName(&redis), Namespace: redis.Namespace}
@@ -67,20 +78,14 @@ func (r *RedisInstanceReconciler) Reconcile(ctx context.Context, req reconcile.R
 		}
 	}
 
-	return reconcile.Result{}, r.updateStatus(ctx, &redis, instanceStatus(dep, exporter))
+	return reconcile.Result{}, r.updateStatus(ctx, &redis, instanceStatus(dep, sfs, exporter))
 }
 
 // reconcileChild creates or patches a child resource of the RedisInstance. mutate sets the desired state on obj.
 func (r *RedisInstanceReconciler) reconcileChild(ctx context.Context, redis *cachev1alpha1.Instance, kind string, obj client.Object, mutate func()) error {
 	log := ctrl.LoggerFrom(ctx).WithValues("kind", kind, "name", obj.GetName())
 	op, err := controllerutil.CreateOrPatch(ctx, r.Client, obj, func() error {
-		//before := obj.DeepCopyObject()
 		mutate()
-		/*
-			if diff := cmp.Diff(before, obj); diff != "" {
-				log.V(4).Info("Child resource mutation", "diff", diff)
-			}
-		*/
 		return controllerutil.SetControllerReference(redis, obj, r.Scheme)
 	})
 	if err != nil {
@@ -117,12 +122,14 @@ func (r *RedisInstanceReconciler) SetupWithManager(mgr manager.Manager) error {
 }
 
 // instanceStatus determines the status of a RedisInstance from its deployments. exporter is nil if no exporter is configured.
-func instanceStatus(redis, exporter *appsv1.Deployment) cachev1alpha1.Status {
+func instanceStatus(dep *appsv1.Deployment, sfs *appsv1.StatefulSet, exporter *appsv1.Deployment) cachev1alpha1.Status {
 	switch {
-	case !deploymentReady(redis):
-		return cachev1alpha1.Status{Ready: false, Message: "Waiting for Redis deployment"}
+	case dep != nil && !deploymentReady(dep):
+		return cachev1alpha1.Status{Ready: false, Message: "Waiting for Redis"}
+	case sfs != nil && !statefulSetReady(sfs):
+		return cachev1alpha1.Status{Ready: false, Message: "Waiting for Redis"}
 	case exporter != nil && !deploymentReady(exporter):
-		return cachev1alpha1.Status{Ready: false, Message: "Waiting for exporter deployment"}
+		return cachev1alpha1.Status{Ready: false, Message: "Waiting for Redis exporter"}
 	default:
 		return cachev1alpha1.Status{Ready: true, Message: "Redis instance is ready"}
 	}
@@ -135,14 +142,40 @@ func deploymentReady(dep *appsv1.Deployment) bool {
 		dep.Status.AvailableReplicas >= desired
 }
 
-func redisDeployment(dep *appsv1.Deployment, redis *cachev1alpha1.Instance) {
-	var args []string
-	if redis.Spec.Persistence != nil {
-		args = []string{"--appendonly", "yes", "--appendfsync", "everysec"}
-	} else {
-		args = []string{"--save", "--appendonly", "no"}
-	}
+func statefulSetReady(sfs *appsv1.StatefulSet) bool {
+	const desired = 1
+	return sfs.Status.ObservedGeneration >= sfs.Generation &&
+		sfs.Status.UpdatedReplicas >= desired &&
+		sfs.Status.AvailableReplicas >= desired
+}
 
+func redisDeployment(dep *appsv1.Deployment, redis *cachev1alpha1.Instance) {
+	dep.Labels = labels(redis.Name)
+	dep.Spec.Replicas = new(int32(1))
+	dep.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels(redis.Name)}
+	dep.Spec.Template.Labels = labels(redis.Name)
+	dep.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyAlways
+	dep.Spec.Template.Spec.Containers = []corev1.Container{redisContainer(redis)}
+	// if persistence is required, mount the volume as per the crd's configuration
+	if redis.Spec.Persistence != nil {
+		dep.Spec.Template.Spec.Volumes = []corev1.Volume{{Name: "redis-data", VolumeSource: *redis.Spec.Persistence}}
+	}
+}
+
+func redisStatefulSet(sfs *appsv1.StatefulSet, redis *cachev1alpha1.Instance) {
+	sfs.Labels = labels(redis.Name)
+	sfs.Spec.Replicas = new(int32(1))
+	sfs.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels(redis.Name)}
+	sfs.Spec.Template.Labels = labels(redis.Name)
+	sfs.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyAlways
+	sfs.Spec.Template.Spec.Containers = []corev1.Container{redisContainer(redis)}
+	// if persistence is required, mount the volume as per the crd's configuration
+	if redis.Spec.Persistence != nil {
+		sfs.Spec.Template.Spec.Volumes = []corev1.Volume{{Name: "redis-data", VolumeSource: *redis.Spec.Persistence}}
+	}
+}
+
+func redisContainer(redis *cachev1alpha1.Instance) corev1.Container {
 	container := corev1.Container{
 		Name:                     "redis",
 		Image:                    redis.Spec.Image,
@@ -152,7 +185,16 @@ func redisDeployment(dep *appsv1.Deployment, redis *cachev1alpha1.Instance) {
 		Ports: []corev1.ContainerPort{
 			{Name: "redis", ContainerPort: redisPort, Protocol: corev1.ProtocolTCP},
 		},
-		Args: args,
+	}
+
+	// depending on persistence, set up the args & volume mounts
+	if redis.Spec.Persistence == nil {
+		container.Args = []string{"--save", "--appendonly", "no"}
+	} else {
+		container.Args = []string{"--appendonly", "yes", "--appendfsync", "everysec"}
+		container.VolumeMounts = []corev1.VolumeMount{
+			{Name: "redis-data", MountPath: "/data"},
+		}
 	}
 
 	// if credentials are required, set up the env and update the args
@@ -160,19 +202,7 @@ func redisDeployment(dep *appsv1.Deployment, redis *cachev1alpha1.Instance) {
 		container.Env = passwordEnv(redis.Spec.Credentials)
 		container.Args = append(container.Args, "--requirepass", "$("+passwordEnvVar+")")
 	}
-
-	// if persistence is required, mount the volume as per the crd's configuration
-	if redis.Spec.Persistence != nil {
-		dep.Spec.Template.Spec.Volumes = []corev1.Volume{{Name: "redis-data", VolumeSource: *redis.Spec.Persistence}}
-		container.VolumeMounts = []corev1.VolumeMount{{Name: "redis-data", MountPath: "/data"}}
-	}
-
-	dep.Labels = labels(redis.Name)
-	dep.Spec.Replicas = new(int32(1))
-	dep.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels(redis.Name)}
-	dep.Spec.Template.Labels = labels(redis.Name)
-	dep.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyAlways
-	dep.Spec.Template.Spec.Containers = []corev1.Container{container}
+	return container
 }
 
 func redisService(svc *corev1.Service, redis *cachev1alpha1.Instance) {
@@ -203,7 +233,6 @@ func redisExporterDeployment(dep *appsv1.Deployment, redis *cachev1alpha1.Instan
 		container.Args = append(container.Args, "-redis.password=$("+passwordEnvVar+")")
 	}
 
-	// TODO: I don't think the deployment needs these labels
 	dep.Labels = labels(exporterName(redis))
 	dep.Spec.Replicas = new(int32(1))
 	dep.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels(exporterName(redis))}

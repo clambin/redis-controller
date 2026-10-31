@@ -4,7 +4,7 @@
 // +kubebuilder:rbac:groups=redis.agrajag.be,resources=instances/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=redis.agrajag.be,resources=instances/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="apps",resources=deployments,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="apps",resources=deployments;statefulsets,verbs=get;list;watch;create;update;patch;delete
 
 // Package v1alpha1 contains the API schema for Instance.
 package v1alpha1
