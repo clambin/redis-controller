@@ -49,14 +49,11 @@ func (r *RedisInstanceReconciler) Reconcile(ctx context.Context, req reconcile.R
 	log.Info("Reconciling RedisInstance")
 
 	result, srvrs, err := r.reconcile(ctx, &redis)
-	if err == nil {
-		err = r.updateStatus(ctx, &redis, srvrs.Status())
-	}
 	if err != nil {
 		log.Error(err, "failed to reconcile RedisInstance", "err", err)
+		return result, err
 	}
-
-	return result, err
+	return result, r.updateStatus(ctx, &redis, srvrs.Status())
 }
 
 // reconcile converges the child resources of the RedisInstance to the desired state.
