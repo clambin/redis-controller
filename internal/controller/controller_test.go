@@ -235,10 +235,26 @@ func TestRedisInstanceReconciler_Reconcile_SwitchPersistence(t *testing.T) {
 	// next reconcile creates the statefulSet
 	_, err = r.Reconcile(ctx, request())
 	require.NoError(t, err)
-
-	// after reconciliation, there should be a statefulSet and no deployment
 	require.Error(t, r.Get(ctx, request().NamespacedName, &appsv1.Deployment{}))
 	require.NoError(t, r.Get(ctx, request().NamespacedName, &sfs))
+
+	// switch back to no persistence
+	require.NoError(t, r.Get(ctx, request().NamespacedName, &updated))
+	updated.Spec.Persistence = nil
+	require.NoError(t, r.Update(ctx, &updated))
+
+	// first reconcile without persistence removes the statefulSet and re-queues
+	result, err = r.Reconcile(ctx, request())
+	require.NoError(t, err)
+	require.NotZero(t, result.RequeueAfter)
+	require.Error(t, r.Get(ctx, request().NamespacedName, &appsv1.StatefulSet{}))
+
+	// next reconcile creates the deployment
+	_, err = r.Reconcile(ctx, request())
+	require.NoError(t, err)
+	require.NoError(t, r.Get(ctx, request().NamespacedName, &dep))
+	require.Error(t, r.Get(ctx, request().NamespacedName, &sfs))
+
 }
 
 func TestInstanceStatus(t *testing.T) {

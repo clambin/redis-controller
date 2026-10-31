@@ -178,21 +178,6 @@ func (r *RedisInstanceReconciler) SetupWithManager(mgr manager.Manager) error {
 		Complete(r)
 }
 
-/*
-// instanceStatus determines the status of a RedisInstance from its deployments. exporter is nil if no exporter is configured.
-
-	func instanceStatus(objs ...client.Object) cachev1alpha1.Status {
-		switch {
-		case !isReady(redisServer):
-			return cachev1alpha1.Status{Ready: false, Message: "Waiting for Redis"}
-		case exporter != nil && !isReady(exporter):
-			return cachev1alpha1.Status{Ready: false, Message: "Waiting for Redis exporter"}
-		default:
-			return cachev1alpha1.Status{Ready: true, Message: "Redis instance is ready"}
-		}
-	}
-*/
-
 func redisDeployment(dep *appsv1.Deployment, redis *cachev1alpha1.Instance) {
 	dep.Labels = labels(redis.Name)
 	dep.Spec.Replicas = new(int32(1))
@@ -336,7 +321,8 @@ func isReady(srv client.Object) bool {
 	case *appsv1.Deployment:
 		return srv.Status.ObservedGeneration >= srv.Generation &&
 			srv.Status.UpdatedReplicas >= desired &&
-			srv.Status.AvailableReplicas >= desired
+			srv.Status.AvailableReplicas >= desired &&
+			srv.Status.UnavailableReplicas == 0
 	case *appsv1.StatefulSet:
 		return srv.Status.ObservedGeneration >= srv.Generation &&
 			srv.Status.UpdatedReplicas >= desired &&
