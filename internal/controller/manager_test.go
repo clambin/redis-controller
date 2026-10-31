@@ -4,16 +4,26 @@ import (
 	"testing"
 
 	"github.com/clambin/redis-controller/api/v1alpha1"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/rest"
 )
 
 func TestNewManager(t *testing.T) {
 	mgr, err := NewManager(&rest.Config{})
 	require.NoError(t, err)
-	s := mgr.GetScheme()
-	knownTypes := s.KnownTypes(v1alpha1.GroupVersion)
-	assert.Equal(t, "v1alpha1.Instance", knownTypes["Instance"].String())
-	assert.Equal(t, "v1alpha1.InstanceList", knownTypes["InstanceList"].String())
+
+	scheme := mgr.GetScheme()
+	require.True(t, scheme.IsVersionRegistered(v1alpha1.GroupVersion))
+	for _, gvk := range []schema.GroupVersionKind{
+		v1alpha1.GroupVersion.WithKind("Instance"),
+		// these don't really do what you'd think they do
+		appsv1.SchemeGroupVersion.WithKind("Deployment"),
+		appsv1.SchemeGroupVersion.WithKind("StatefulSet"),
+		corev1.SchemeGroupVersion.WithKind("Service"),
+	} {
+		require.True(t, scheme.Recognizes(gvk))
+	}
 }

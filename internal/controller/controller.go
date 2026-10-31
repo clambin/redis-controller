@@ -116,6 +116,7 @@ func (r *RedisInstanceReconciler) updateStatus(ctx context.Context, redis *cache
 func (r *RedisInstanceReconciler) SetupWithManager(mgr manager.Manager) error {
 	return builder.ControllerManagedBy(mgr).
 		For(&cachev1alpha1.Instance{}).
+		Owns(&appsv1.StatefulSet{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
 		Complete(r)
