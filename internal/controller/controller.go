@@ -36,10 +36,6 @@ type RedisInstanceReconciler struct {
 
 // Reconcile reads the RedisInstance and converges its child resources to the desired state.
 func (r *RedisInstanceReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
-	log := ctrl.LoggerFrom(ctx).WithValues("instance", req.NamespacedName)
-	ctx = ctrl.LoggerInto(ctx, log)
-	log.Info("Reconciling RedisInstance")
-
 	var redis cachev1alpha1.Instance
 	if err := r.Get(ctx, req.NamespacedName, &redis); err != nil {
 		// NotFound means the parent was deleted. Owner references let Kubernetes GC
@@ -47,52 +43,86 @@ func (r *RedisInstanceReconciler) Reconcile(ctx context.Context, req reconcile.R
 		return reconcile.Result{}, client.IgnoreNotFound(err)
 	}
 
+	result, i, err := r.reconcile(ctx, req, &redis)
+	if err == nil {
+		err = r.updateStatus(ctx, &redis, i.Status())
+	}
+	return result, err
+}
+
+// reconcile reads the RedisInstance and converges its child resources to the desired state.
+func (r *RedisInstanceReconciler) reconcile(ctx context.Context, req reconcile.Request, redis *cachev1alpha1.Instance) (reconcile.Result, servers, error) {
+	log := ctrl.LoggerFrom(ctx).WithValues("instance", req.NamespacedName)
+	ctx = ctrl.LoggerInto(ctx, log)
+	log.Info("Reconciling RedisInstance")
+
 	if redis.Spec.Image == "" {
-		return reconcile.Result{}, fmt.Errorf("spec.image must not be empty")
+		return reconcile.Result{}, servers{}, fmt.Errorf("spec.image must not be empty")
 	}
 
 	// reconcile redis instance. if no persistence is specified, use deployment; otherwise use statefulSet
-	var dep *appsv1.Deployment
-	var sfs *appsv1.StatefulSet
-	if redis.Spec.Persistence == nil {
-		// remove the statefulset left over from persistent mode before creating the deployment
-		if gone, err := r.removeObsolete(ctx, &redis, &appsv1.StatefulSet{}); err != nil || !gone {
-			return reconcile.Result{RequeueAfter: 5 * time.Second}, err
-		}
-		dep = &appsv1.Deployment{Name: redis.Name, Namespace: redis.Namespace}
-		if err := r.reconcileChild(ctx, &redis, "deployment", dep, func() { redisDeployment(dep, &redis) }); err != nil {
-			return reconcile.Result{}, err
-		}
-	} else {
-		// remove the deployment left over from non-persistent mode before creating the statefulset
-		if gone, err := r.removeObsolete(ctx, &redis, &appsv1.Deployment{}); err != nil || !gone {
-			return reconcile.Result{RequeueAfter: 5 * time.Second}, err
-		}
-		sfs = &appsv1.StatefulSet{Name: redis.Name, Namespace: redis.Namespace}
-		if err := r.reconcileChild(ctx, &redis, "statefulset", sfs, func() { redisStatefulSet(sfs, &redis) }); err != nil {
-			return reconcile.Result{}, err
-		}
+	result, redisServer, err := r.reconcileRedisServer(ctx, redis)
+	if err != nil || !result.IsZero() {
+		return result, servers{}, err
 	}
+	srvrs := servers{server: redisServer}
+
 	// reconcile service
 	svc := &corev1.Service{Name: redis.Name, Namespace: redis.Namespace}
-	if err := r.reconcileChild(ctx, &redis, "service", svc, func() { redisService(svc, &redis) }); err != nil {
-		return reconcile.Result{}, err
+	if err = r.reconcileChild(ctx, redis, "service", svc, func() { redisService(svc, redis) }); err != nil {
+		return reconcile.Result{}, servers{}, err
 	}
 	// reconcile exporter
-	var exporter *appsv1.Deployment
-	if redis.Spec.Exporter != nil {
-		exporter = &appsv1.Deployment{Name: exporterName(&redis), Namespace: redis.Namespace}
-		if err := r.reconcileChild(ctx, &redis, "exporter deployment", exporter, func() { redisExporterDeployment(exporter, &redis) }); err != nil {
-			return reconcile.Result{}, err
-		}
+	result, srvrs.exporter, err = r.reconcileExporter(ctx, redis)
+	return result, srvrs, err
+}
+
+func (r *RedisInstanceReconciler) reconcileRedisServer(ctx context.Context, redis *cachev1alpha1.Instance) (reconcile.Result, client.Object, error) {
+	var newServer, oldServer client.Object
+	var mutater func()
+	var kind string
+
+	if redis.Spec.Persistence == nil {
+		newServer = &appsv1.Deployment{Name: redis.Name, Namespace: redis.Namespace}
+		oldServer = &appsv1.StatefulSet{Name: redis.Name, Namespace: redis.Namespace}
+		mutater = func() { redisDeployment(newServer.(*appsv1.Deployment), redis) }
+		kind = "redis deployment"
+	} else {
+		newServer = &appsv1.StatefulSet{Name: redis.Name, Namespace: redis.Namespace}
+		oldServer = &appsv1.Deployment{Name: redis.Name, Namespace: redis.Namespace}
+		mutater = func() { redisStatefulSet(newServer.(*appsv1.StatefulSet), redis) }
+		kind = "redis statefulSet"
 	}
 
-	return reconcile.Result{}, r.updateStatus(ctx, &redis, instanceStatus(dep, sfs, exporter))
+	// depending on the workload type, remove any obsolete deployment or statefulSet
+	if gone, err := r.removeObsolete(ctx, redis, oldServer); err != nil || !gone {
+		return reconcile.Result{RequeueAfter: 5 * time.Second}, nil, err
+	}
+
+	if err := r.reconcileChild(ctx, redis, kind, newServer, mutater); err != nil {
+		return reconcile.Result{RequeueAfter: 5 * time.Second}, nil, err
+	}
+	return reconcile.Result{}, newServer, nil
+}
+
+func (r *RedisInstanceReconciler) reconcileExporter(ctx context.Context, redis *cachev1alpha1.Instance) (reconcile.Result, *appsv1.Deployment, error) {
+	exporter := &appsv1.Deployment{Name: exporterName(redis), Namespace: redis.Namespace}
+	// if no exporter is specified, remove any obsolete deployment
+	if redis.Spec.Exporter == nil {
+		_, err := r.removeObsolete(ctx, redis, exporter)
+		return reconcile.Result{}, nil, client.IgnoreNotFound(err)
+	}
+	// reconcile exporter deployment
+	err := r.reconcileChild(ctx, redis, "exporter deployment", exporter, func() { redisExporterDeployment(exporter, redis) })
+	if err != nil {
+		exporter = nil
+	}
+	return reconcile.Result{}, exporter, err
 }
 
 // removeObsolete deletes the child of the other workload kind. It reports true only when that child is gone.
 func (r *RedisInstanceReconciler) removeObsolete(ctx context.Context, redis *cachev1alpha1.Instance, obj client.Object) (bool, error) {
-	key := client.ObjectKey{Name: redis.Name, Namespace: redis.Namespace}
+	key := client.ObjectKeyFromObject(obj)
 	if err := r.Get(ctx, key, obj); err != nil {
 		return true, client.IgnoreNotFound(err)
 	}
@@ -148,33 +178,20 @@ func (r *RedisInstanceReconciler) SetupWithManager(mgr manager.Manager) error {
 		Complete(r)
 }
 
+/*
 // instanceStatus determines the status of a RedisInstance from its deployments. exporter is nil if no exporter is configured.
-func instanceStatus(dep *appsv1.Deployment, sfs *appsv1.StatefulSet, exporter *appsv1.Deployment) cachev1alpha1.Status {
-	switch {
-	case dep != nil && !deploymentReady(dep):
-		return cachev1alpha1.Status{Ready: false, Message: "Waiting for Redis"}
-	case sfs != nil && !statefulSetReady(sfs):
-		return cachev1alpha1.Status{Ready: false, Message: "Waiting for Redis"}
-	case exporter != nil && !deploymentReady(exporter):
-		return cachev1alpha1.Status{Ready: false, Message: "Waiting for Redis exporter"}
-	default:
-		return cachev1alpha1.Status{Ready: true, Message: "Redis instance is ready"}
+
+	func instanceStatus(objs ...client.Object) cachev1alpha1.Status {
+		switch {
+		case !isReady(redisServer):
+			return cachev1alpha1.Status{Ready: false, Message: "Waiting for Redis"}
+		case exporter != nil && !isReady(exporter):
+			return cachev1alpha1.Status{Ready: false, Message: "Waiting for Redis exporter"}
+		default:
+			return cachev1alpha1.Status{Ready: true, Message: "Redis instance is ready"}
+		}
 	}
-}
-
-func deploymentReady(dep *appsv1.Deployment) bool {
-	const desired = 1
-	return dep.Status.ObservedGeneration >= dep.Generation &&
-		dep.Status.UpdatedReplicas >= desired &&
-		dep.Status.AvailableReplicas >= desired
-}
-
-func statefulSetReady(sfs *appsv1.StatefulSet) bool {
-	const desired = 1
-	return sfs.Status.ObservedGeneration >= sfs.Generation &&
-		sfs.Status.UpdatedReplicas >= desired &&
-		sfs.Status.AvailableReplicas >= desired
-}
+*/
 
 func redisDeployment(dep *appsv1.Deployment, redis *cachev1alpha1.Instance) {
 	dep.Labels = labels(redis.Name)
@@ -291,4 +308,40 @@ func exporterName(redis *cachev1alpha1.Instance) string {
 
 func labels(name string) map[string]string {
 	return map[string]string{appLabel: name}
+}
+
+type servers struct {
+	server   client.Object
+	exporter *appsv1.Deployment
+}
+
+func (s servers) Status() cachev1alpha1.Status {
+	switch {
+	case !isReady(s.server):
+		return cachev1alpha1.Status{Ready: false, Message: "Waiting for Redis"}
+	case s.exporter != nil && !isReady(s.exporter):
+		return cachev1alpha1.Status{Ready: false, Message: "Waiting for Redis exporter"}
+	default:
+		return cachev1alpha1.Status{Ready: true, Message: "Redis instance is ready"}
+	}
+
+}
+
+func isReady(srv client.Object) bool {
+	if srv == nil {
+		return false
+	}
+	const desired = 1
+	switch srv := srv.(type) {
+	case *appsv1.Deployment:
+		return srv.Status.ObservedGeneration >= srv.Generation &&
+			srv.Status.UpdatedReplicas >= desired &&
+			srv.Status.AvailableReplicas >= desired
+	case *appsv1.StatefulSet:
+		return srv.Status.ObservedGeneration >= srv.Generation &&
+			srv.Status.UpdatedReplicas >= desired &&
+			srv.Status.AvailableReplicas >= desired
+	default:
+		panic(fmt.Errorf("unknown object type %T", srv))
+	}
 }
