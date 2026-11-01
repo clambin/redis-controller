@@ -3,7 +3,7 @@ on:
   push:
     branches:
       - main
-      - sfs
+      - status
   workflow_call:
     inputs:
       tags:
