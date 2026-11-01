@@ -1,0 +1,36 @@
+metadata:
+  labels:
+    app.kubernetes.io/name: test
+  name: test
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: test
+  serviceName: ""
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: test
+    spec:
+      containers:
+      - args:
+        - --save
+        - --appendonly
+        - "no"
+        image: redis:latest
+        imagePullPolicy: IfNotPresent
+        name: redis
+        ports:
+        - containerPort: 6379
+          name: redis
+          protocol: TCP
+        resources: {}
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+      restartPolicy: Always
+  updateStrategy: {}
+status:
+  availableReplicas: 0
+  replicas: 0

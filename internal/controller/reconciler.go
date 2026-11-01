@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strconv"
-	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -28,8 +27,8 @@ const (
 	passwordEnvVar    = "REDIS_PASSWORD"
 )
 
-// RedisInstanceReconciler ensures that each RedisInstance has a Redis workload (a Deployment, or a StatefulSet
-// when persistence is requested), a Service and, optionally, an exporter Deployment.
+// RedisInstanceReconciler ensures that each RedisInstance has a Redis workload, a Service and,
+// optionally, an exporter Deployment.
 type RedisInstanceReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
@@ -58,13 +57,13 @@ func (r *RedisInstanceReconciler) Reconcile(ctx context.Context, req reconcile.R
 
 // reconcile converges the child resources of the RedisInstance to the desired state.
 func (r *RedisInstanceReconciler) reconcile(ctx context.Context, redis *cachev1alpha1.Instance) (reconcile.Result, servers, error) {
-	result, server, err := r.reconcileRedisServer(ctx, redis)
-	if err != nil || !result.IsZero() {
-		return result, servers{}, err
+	sfs := &appsv1.StatefulSet{Name: redis.Name, Namespace: redis.Namespace}
+	if err := r.reconcileChild(ctx, redis, "redis statefulSet", sfs, func() { redisStatefulSet(sfs, redis) }); err != nil {
+		return reconcile.Result{}, servers{}, err
 	}
 
 	svc := &corev1.Service{Name: redis.Name, Namespace: redis.Namespace}
-	if err = r.reconcileChild(ctx, redis, "service", svc, func() { redisService(svc, redis) }); err != nil {
+	if err := r.reconcileChild(ctx, redis, "service", svc, func() { redisService(svc, redis) }); err != nil {
 		return reconcile.Result{}, servers{}, err
 	}
 
@@ -72,37 +71,7 @@ func (r *RedisInstanceReconciler) reconcile(ctx context.Context, redis *cachev1a
 	if err != nil {
 		return reconcile.Result{}, servers{}, err
 	}
-	return reconcile.Result{}, servers{server: server, exporter: exporter}, nil
-}
-
-// reconcileRedisServer runs redis as a Deployment, or as a StatefulSet when persistence is requested.
-// Any workload of the other kind is removed first; while that is in progress, reconciliation is re-queued.
-func (r *RedisInstanceReconciler) reconcileRedisServer(ctx context.Context, redis *cachev1alpha1.Instance) (reconcile.Result, client.Object, error) {
-	var server, obsolete client.Object
-	var mutate func()
-	var kind string
-
-	if redis.Spec.Persistence == nil {
-		dep := &appsv1.Deployment{Name: redis.Name, Namespace: redis.Namespace}
-		server, mutate, kind = dep, func() { redisDeployment(dep, redis) }, "redis deployment"
-		obsolete = &appsv1.StatefulSet{Name: redis.Name, Namespace: redis.Namespace}
-	} else {
-		sfs := &appsv1.StatefulSet{Name: redis.Name, Namespace: redis.Namespace}
-		server, mutate, kind = sfs, func() { redisStatefulSet(sfs, redis) }, "redis statefulSet"
-		obsolete = &appsv1.Deployment{Name: redis.Name, Namespace: redis.Namespace}
-	}
-
-	if gone, err := r.removeObsolete(ctx, redis, obsolete); err != nil || !gone {
-		if err != nil {
-			return reconcile.Result{}, nil, err
-		}
-		return reconcile.Result{RequeueAfter: 5 * time.Second}, nil, nil
-	}
-
-	if err := r.reconcileChild(ctx, redis, kind, server, mutate); err != nil {
-		return reconcile.Result{}, nil, err
-	}
-	return reconcile.Result{}, server, nil
+	return reconcile.Result{}, servers{server: sfs, service: svc, exporter: exporter}, nil
 }
 
 // reconcileExporter creates or patches the exporter deployment. If no exporter is requested, any existing one is removed.
@@ -174,13 +143,6 @@ func (r *RedisInstanceReconciler) SetupWithManager(mgr manager.Manager) error {
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
 		Complete(r)
-}
-
-func redisDeployment(dep *appsv1.Deployment, redis *cachev1alpha1.Instance) {
-	dep.Labels = labels(redis.Name)
-	dep.Spec.Replicas = new(int32(1))
-	dep.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels(redis.Name)}
-	redisPodTemplate(&dep.Spec.Template, redis)
 }
 
 func redisStatefulSet(sfs *appsv1.StatefulSet, redis *cachev1alpha1.Instance) {
@@ -293,8 +255,9 @@ func labels(name string) map[string]string {
 }
 
 type servers struct {
-	server   client.Object
+	server   *appsv1.StatefulSet
 	exporter *appsv1.Deployment
+	service  *corev1.Service
 }
 
 func (s servers) Status() cachev1alpha1.InstanceStatus {

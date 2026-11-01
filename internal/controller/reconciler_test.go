@@ -31,14 +31,14 @@ func TestReconcileCreatesDeploymentAndService(t *testing.T) {
 	_, err := r.Reconcile(ctx, request())
 	require.NoError(t, err)
 
-	dep := appsv1.Deployment{Name: redis.Name, Namespace: redis.Namespace}
-	require.NoError(t, r.Get(ctx, request().NamespacedName, &dep))
-	require.Len(t, dep.Spec.Template.Spec.Containers, 1)
-	assert.Equal(t, "redis:8", dep.Spec.Template.Spec.Containers[0].Image)
-	require.Len(t, dep.Spec.Template.Spec.Containers[0].Ports, 1)
-	assert.Equal(t, int32(redisPort), dep.Spec.Template.Spec.Containers[0].Ports[0].ContainerPort)
-	require.Len(t, dep.OwnerReferences, 1)
-	assert.Equal(t, redis.Name, dep.OwnerReferences[0].Name)
+	statefulSet := appsv1.StatefulSet{Name: redis.Name, Namespace: redis.Namespace}
+	require.NoError(t, r.Get(ctx, request().NamespacedName, &statefulSet))
+	require.Len(t, statefulSet.Spec.Template.Spec.Containers, 1)
+	assert.Equal(t, "redis:8", statefulSet.Spec.Template.Spec.Containers[0].Image)
+	require.Len(t, statefulSet.Spec.Template.Spec.Containers[0].Ports, 1)
+	assert.Equal(t, int32(redisPort), statefulSet.Spec.Template.Spec.Containers[0].Ports[0].ContainerPort)
+	require.Len(t, statefulSet.OwnerReferences, 1)
+	assert.Equal(t, redis.Name, statefulSet.OwnerReferences[0].Name)
 
 	var svc corev1.Service
 	require.NoError(t, r.Get(ctx, request().NamespacedName, &svc))
@@ -57,14 +57,14 @@ func TestReconcileCreatesDeploymentAndServiceAndExporter(t *testing.T) {
 	_, err := r.Reconcile(ctx, request())
 	require.NoError(t, err)
 
-	var dep appsv1.Deployment
-	require.NoError(t, r.Get(ctx, request().NamespacedName, &dep))
-	require.Len(t, dep.Spec.Template.Spec.Containers, 1)
-	assert.Equal(t, "redis:8", dep.Spec.Template.Spec.Containers[0].Image)
-	require.Len(t, dep.Spec.Template.Spec.Containers[0].Ports, 1)
-	assert.Equal(t, int32(redisPort), dep.Spec.Template.Spec.Containers[0].Ports[0].ContainerPort)
-	require.Len(t, dep.OwnerReferences, 1)
-	assert.Equal(t, redis.Name, dep.OwnerReferences[0].Name)
+	var statefulSet appsv1.StatefulSet
+	require.NoError(t, r.Get(ctx, request().NamespacedName, &statefulSet))
+	require.Len(t, statefulSet.Spec.Template.Spec.Containers, 1)
+	assert.Equal(t, "redis:8", statefulSet.Spec.Template.Spec.Containers[0].Image)
+	require.Len(t, statefulSet.Spec.Template.Spec.Containers[0].Ports, 1)
+	assert.Equal(t, int32(redisPort), statefulSet.Spec.Template.Spec.Containers[0].Ports[0].ContainerPort)
+	require.Len(t, statefulSet.OwnerReferences, 1)
+	assert.Equal(t, redis.Name, statefulSet.OwnerReferences[0].Name)
 
 	var svc corev1.Service
 	require.NoError(t, r.Get(ctx, request().NamespacedName, &svc))
@@ -73,13 +73,14 @@ func TestReconcileCreatesDeploymentAndServiceAndExporter(t *testing.T) {
 	assert.Equal(t, int32(redisPort), svc.Spec.Ports[0].Port)
 	assert.Equal(t, redis.Name, svc.Spec.Selector[appLabel])
 
-	require.NoError(t, r.Get(ctx, types.NamespacedName{Namespace: redis.Namespace, Name: redis.Name + "-exporter"}, &dep))
-	require.Len(t, dep.Spec.Template.Spec.Containers, 1)
-	assert.Equal(t, "bitnami/redis-exporter:latest", dep.Spec.Template.Spec.Containers[0].Image)
-	require.Len(t, dep.Spec.Template.Spec.Containers[0].Ports, 1)
-	assert.Equal(t, int32(9121), dep.Spec.Template.Spec.Containers[0].Ports[0].ContainerPort)
-	require.Len(t, dep.OwnerReferences, 1)
-	assert.Equal(t, redis.Name, dep.OwnerReferences[0].Name)
+	var deployment appsv1.Deployment
+	require.NoError(t, r.Get(ctx, types.NamespacedName{Namespace: redis.Namespace, Name: redis.Name + "-exporter"}, &deployment))
+	require.Len(t, deployment.Spec.Template.Spec.Containers, 1)
+	assert.Equal(t, "bitnami/redis-exporter:latest", deployment.Spec.Template.Spec.Containers[0].Image)
+	require.Len(t, deployment.Spec.Template.Spec.Containers[0].Ports, 1)
+	assert.Equal(t, int32(9121), deployment.Spec.Template.Spec.Containers[0].Ports[0].ContainerPort)
+	require.Len(t, deployment.OwnerReferences, 1)
+	assert.Equal(t, redis.Name, deployment.OwnerReferences[0].Name)
 }
 
 func TestReconcileUpdatesImage(t *testing.T) {
@@ -100,9 +101,9 @@ func TestReconcileUpdatesImage(t *testing.T) {
 	require.NoError(t, err)
 
 	// validate update in deployment
-	var dep appsv1.Deployment
-	require.NoError(t, r.Get(ctx, request().NamespacedName, &dep))
-	assert.Equal(t, "redis:8.2", dep.Spec.Template.Spec.Containers[0].Image)
+	var statefulSet appsv1.StatefulSet
+	require.NoError(t, r.Get(ctx, request().NamespacedName, &statefulSet))
+	assert.Equal(t, "redis:8.2", statefulSet.Spec.Template.Spec.Containers[0].Image)
 }
 
 func TestReconcileRecreatesMissingChild(t *testing.T) {
@@ -112,16 +113,16 @@ func TestReconcileRecreatesMissingChild(t *testing.T) {
 	// sync
 	_, err := r.Reconcile(ctx, request())
 	require.NoError(t, err)
-	var dep appsv1.Deployment
-	require.NoError(t, r.Get(ctx, request().NamespacedName, &dep))
+	var statefulSet appsv1.StatefulSet
+	require.NoError(t, r.Get(ctx, request().NamespacedName, &statefulSet))
 
-	// delete the deployment and reconcile
-	require.NoError(t, r.Delete(ctx, &dep))
+	// delete the redis server and reconcile
+	require.NoError(t, r.Delete(ctx, &statefulSet))
 	_, err = r.Reconcile(ctx, request())
 	require.NoError(t, err)
 
-	// deployment was recreated
-	require.NoError(t, r.Get(ctx, request().NamespacedName, &dep))
+	// redis server was recreated
+	require.NoError(t, r.Get(ctx, request().NamespacedName, &statefulSet))
 }
 
 func TestReconcileMissingParentDoesNothing(t *testing.T) {
@@ -132,15 +133,19 @@ func TestReconcileMissingParentDoesNothing(t *testing.T) {
 	require.NoError(t, err)
 
 	// no deployment should be created
-	var dep appsv1.Deployment
-	require.True(t, k8serrors.IsNotFound(r.Get(ctx, request().NamespacedName, &dep)))
+	var statefulSet appsv1.StatefulSet
+	require.True(t, k8serrors.IsNotFound(r.Get(ctx, request().NamespacedName, &statefulSet)))
 }
 
 func TestReconcileUpdatesStatus(t *testing.T) {
+	type ready struct {
+		server   bool
+		exporter bool
+	}
 	tests := []struct {
 		name     string
 		exporter *string
-		ready    []string
+		ready    ready
 		want     cachev1alpha1.InstanceStatus
 	}{
 		{
@@ -149,19 +154,19 @@ func TestReconcileUpdatesStatus(t *testing.T) {
 		},
 		{
 			name:  "redis ready",
-			ready: []string{"cache"},
+			ready: ready{server: true},
 			want:  cachev1alpha1.InstanceStatus{Ready: true, Message: "Redis instance is ready"},
 		},
 		{
 			name:     "exporter not ready",
 			exporter: new("bitnami/redis-exporter:latest"),
-			ready:    []string{"cache"},
+			ready:    ready{server: true},
 			want:     cachev1alpha1.InstanceStatus{Message: "Waiting for Redis exporter"},
 		},
 		{
 			name:     "redis and exporter ready",
 			exporter: new("bitnami/redis-exporter:latest"),
-			ready:    []string{"cache", "cache-exporter"},
+			ready:    ready{server: true, exporter: true},
 			want:     cachev1alpha1.InstanceStatus{Ready: true, Message: "Redis instance is ready"},
 		},
 	}
@@ -180,13 +185,20 @@ func TestReconcileUpdatesStatus(t *testing.T) {
 			require.NoError(t, r.Get(ctx, request().NamespacedName, &current))
 			assert.Equal(t, cachev1alpha1.InstanceStatus{Message: "Waiting for Redis"}, current.Status)
 
-			// mark deployments as ready and reconcile
-			for _, name := range tt.ready {
-				var dep appsv1.Deployment
-				require.NoError(t, r.Get(ctx, types.NamespacedName{Namespace: redis.Namespace, Name: name}, &dep))
-				dep.Status = appsv1.DeploymentStatus{ObservedGeneration: dep.Generation, UpdatedReplicas: 1, AvailableReplicas: 1}
-				require.NoError(t, r.Status().Update(ctx, &dep))
+			// mark components as ready and reconcile
+			if tt.ready.server {
+				var statefulSet appsv1.StatefulSet
+				require.NoError(t, r.Get(ctx, types.NamespacedName{Namespace: redis.Namespace, Name: redis.Name}, &statefulSet))
+				statefulSet.Status = appsv1.StatefulSetStatus{ObservedGeneration: statefulSet.Generation, UpdatedReplicas: 1, AvailableReplicas: 1}
+				require.NoError(t, r.Status().Update(ctx, &statefulSet))
 			}
+			if tt.ready.exporter {
+				var deployment appsv1.Deployment
+				require.NoError(t, r.Get(ctx, types.NamespacedName{Namespace: redis.Namespace, Name: redis.Name + "-exporter"}, &deployment))
+				deployment.Status = appsv1.DeploymentStatus{ObservedGeneration: deployment.Generation, UpdatedReplicas: 1, AvailableReplicas: 1}
+				require.NoError(t, r.Status().Update(ctx, &deployment))
+			}
+
 			_, err = r.Reconcile(ctx, request())
 			require.NoError(t, err)
 
@@ -194,58 +206,6 @@ func TestReconcileUpdatesStatus(t *testing.T) {
 			assert.Equal(t, tt.want, current.Status)
 		})
 	}
-}
-
-func TestRedisInstanceReconciler_Reconcile_SwitchPersistence(t *testing.T) {
-	ctx := context.Background()
-	redis := instance()
-	r := newReconciler(t, redis)
-
-	// reconcile without persistence
-	_, err := r.Reconcile(ctx, request())
-	require.NoError(t, err)
-
-	// after reconciliation, there should be a deployment and no statefulSet
-	var dep appsv1.Deployment
-	require.NoError(t, r.Get(ctx, request().NamespacedName, &dep))
-	var sfs appsv1.StatefulSet
-	require.Error(t, r.Get(ctx, request().NamespacedName, &sfs))
-
-	// ask for persistence
-	var updated cachev1alpha1.Instance
-	require.NoError(t, r.Get(ctx, request().NamespacedName, &updated))
-	updated.Spec.Persistence = &corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}
-	require.NoError(t, r.Update(ctx, &updated))
-
-	// first reconcile with persistence removes the deployment and re-queues
-	result, err := r.Reconcile(ctx, request())
-	require.NoError(t, err)
-	require.NotZero(t, result.RequeueAfter)
-	require.Error(t, r.Get(ctx, request().NamespacedName, &appsv1.Deployment{}))
-
-	// next reconcile creates the statefulSet
-	_, err = r.Reconcile(ctx, request())
-	require.NoError(t, err)
-	require.Error(t, r.Get(ctx, request().NamespacedName, &appsv1.Deployment{}))
-	require.NoError(t, r.Get(ctx, request().NamespacedName, &sfs))
-
-	// switch back to no persistence
-	require.NoError(t, r.Get(ctx, request().NamespacedName, &updated))
-	updated.Spec.Persistence = nil
-	require.NoError(t, r.Update(ctx, &updated))
-
-	// first reconcile without persistence removes the statefulSet and re-queues
-	result, err = r.Reconcile(ctx, request())
-	require.NoError(t, err)
-	require.NotZero(t, result.RequeueAfter)
-	require.Error(t, r.Get(ctx, request().NamespacedName, &appsv1.StatefulSet{}))
-
-	// next reconcile creates the deployment
-	_, err = r.Reconcile(ctx, request())
-	require.NoError(t, err)
-	require.NoError(t, r.Get(ctx, request().NamespacedName, &dep))
-	require.Error(t, r.Get(ctx, request().NamespacedName, &sfs))
-
 }
 
 func TestInstanceStatus(t *testing.T) {
@@ -265,18 +225,12 @@ func TestInstanceStatus(t *testing.T) {
 		s    servers
 		want cachev1alpha1.InstanceStatus
 	}{
-		{"redis deployment not ready", servers{server: depNotReady}, cachev1alpha1.InstanceStatus{Message: "Waiting for Redis"}},
-		{"redis deployment outdated", servers{server: depOutdated}, cachev1alpha1.InstanceStatus{Message: "Waiting for Redis"}},
-		{"redis deployment ready, no exporter", servers{server: depReady}, cachev1alpha1.InstanceStatus{Ready: true, Message: "Redis instance is ready"}},
-		{"redis deployment not ready, exporter ready", servers{server: depNotReady, exporter: depReady}, cachev1alpha1.InstanceStatus{Message: "Waiting for Redis"}},
-		{"redis deployment ready, exporter not ready", servers{server: depReady, exporter: depNotReady}, cachev1alpha1.InstanceStatus{Message: "Waiting for Redis exporter"}},
-		{"redis deployment and exporter ready", servers{server: depReady, exporter: depReady}, cachev1alpha1.InstanceStatus{Ready: true, Message: "Redis instance is ready"}},
-		{"redis statefulSet not ready", servers{server: sfsNotReady}, cachev1alpha1.InstanceStatus{Message: "Waiting for Redis"}},
-		{"redis statefulSet outdated", servers{server: sfsOutdated}, cachev1alpha1.InstanceStatus{Message: "Waiting for Redis"}},
-		{"redis statefulSet ready, no exporter", servers{server: sfsReady}, cachev1alpha1.InstanceStatus{Ready: true, Message: "Redis instance is ready"}},
-		{"redis statefulSet not ready, exporter ready", servers{server: sfsNotReady, exporter: depReady}, cachev1alpha1.InstanceStatus{Message: "Waiting for Redis"}},
-		{"redis statefulSet ready, exporter not ready", servers{server: sfsReady, exporter: depNotReady}, cachev1alpha1.InstanceStatus{Message: "Waiting for Redis exporter"}},
-		{"redis statefulSet and exporter ready", servers{server: sfsReady, exporter: depReady}, cachev1alpha1.InstanceStatus{Ready: true, Message: "Redis instance is ready"}},
+		{"redis not ready", servers{server: sfsNotReady}, cachev1alpha1.InstanceStatus{Message: "Waiting for Redis"}},
+		{"redis outdated", servers{server: sfsOutdated}, cachev1alpha1.InstanceStatus{Message: "Waiting for Redis"}},
+		{"redis ready, no exporter", servers{server: sfsReady}, cachev1alpha1.InstanceStatus{Ready: true, Message: "Redis instance is ready"}},
+		{"redis not ready, exporter ready", servers{server: sfsNotReady, exporter: depReady}, cachev1alpha1.InstanceStatus{Message: "Waiting for Redis"}},
+		{"redis ready, exporter not ready", servers{server: sfsReady, exporter: depNotReady}, cachev1alpha1.InstanceStatus{Message: "Waiting for Redis exporter"}},
+		{"redis and exporter ready", servers{server: sfsReady, exporter: depReady}, cachev1alpha1.InstanceStatus{Ready: true, Message: "Redis instance is ready"}},
 	}
 
 	for _, tt := range tests {
@@ -286,13 +240,13 @@ func TestInstanceStatus(t *testing.T) {
 	}
 }
 
-func TestRedisDeployment(t *testing.T) {
+func TestRedisStatefulSet(t *testing.T) {
 	tests := []struct {
 		name     string
 		instance *cachev1alpha1.Instance
 	}{
 		{
-			name: "simple deployment",
+			name: "simple",
 			instance: &cachev1alpha1.Instance{
 				Name:      "test",
 				Namespace: "default",
@@ -334,12 +288,12 @@ func TestRedisDeployment(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dep := appsv1.Deployment{
+			statefulSet := appsv1.StatefulSet{
 				Name:      tt.instance.Name,
 				Namespace: tt.instance.Namespace,
 			}
-			redisDeployment(&dep, tt.instance)
-			marshalAndCompare(t, &dep)
+			redisStatefulSet(&statefulSet, tt.instance)
+			marshalAndCompare(t, &statefulSet)
 		})
 	}
 }
