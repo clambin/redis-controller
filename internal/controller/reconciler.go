@@ -8,6 +8,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -136,7 +137,10 @@ func (r *RedisInstanceReconciler) updateStatus(ctx context.Context, redis *cache
 		return nil
 	}
 	before := redis.DeepCopy()
-	redis.Status = status
+	redis.Status.Conditions = nil
+	for _, cond := range status.Conditions {
+		meta.SetStatusCondition(&redis.Status.Conditions, cond)
+	}
 	if err := r.Status().Patch(ctx, redis, client.MergeFrom(before)); err != nil {
 		return fmt.Errorf("status: %w", err)
 	}
