@@ -32,18 +32,18 @@ func AddToScheme(scheme *runtime.Scheme) error {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 type Instance struct {
-	Spec              Spec `json:"spec,omitempty"`
+	Spec              InstanceSpec `json:"spec,omitempty"`
 	metav1.TypeMeta   `json:",inline"`
-	Status            Status `json:"status,omitempty"`
+	Status            InstanceStatus `json:"status,omitempty"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 }
 
-// Spec describes a single Redis server managed by this controller.
-type Spec struct {
+// InstanceSpec describes a single Redis server managed by this controller.
+type InstanceSpec struct {
 	// Credentials define the Secret containing the credentials.
 	// If the Secret is not specified, Redis runs without authentication.
 	// +optional
-	Credentials *Credentials `json:"credentials,omitempty"`
+	Credentials *RedisCredentials `json:"credentials,omitempty"`
 	// Exporter is the Redis exporter container image, for example, bitnami/redis-exporter:latest
 	// If the Exporter is not specified, the controller will not create a Redis exporter.
 	// +kubebuilder:validation:MinLength=1
@@ -58,7 +58,7 @@ type Spec struct {
 	Image string `json:"image"`
 }
 
-type Credentials struct {
+type RedisCredentials struct {
 	// SecretName references the Secret containing the credentials.
 	// +kubebuilder:validation:MinLength=1
 	SecretName string `json:"secretName"`
@@ -67,8 +67,8 @@ type Credentials struct {
 	PasswordKey string `json:"passwordKey"`
 }
 
-// Status contains the status of a RedisInstance resource.
-type Status struct {
+// InstanceStatus contains the status of a RedisInstance resource.
+type InstanceStatus struct {
 	// +optional
 	Message string `json:"message,omitempty"`
 	// +optional

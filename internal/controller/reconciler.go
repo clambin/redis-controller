@@ -154,7 +154,7 @@ func (r *RedisInstanceReconciler) reconcileChild(ctx context.Context, redis *cac
 }
 
 // updateStatus patches the status of the RedisInstance, if it changed.
-func (r *RedisInstanceReconciler) updateStatus(ctx context.Context, redis *cachev1alpha1.Instance, status cachev1alpha1.Status) error {
+func (r *RedisInstanceReconciler) updateStatus(ctx context.Context, redis *cachev1alpha1.Instance, status cachev1alpha1.InstanceStatus) error {
 	if redis.Status == status {
 		return nil
 	}
@@ -272,7 +272,7 @@ func redisExporterDeployment(dep *appsv1.Deployment, redis *cachev1alpha1.Instan
 }
 
 // passwordEnv exposes the Redis password from the credentials Secret as an environment variable.
-func passwordEnv(credentials *cachev1alpha1.Credentials) []corev1.EnvVar {
+func passwordEnv(credentials *cachev1alpha1.RedisCredentials) []corev1.EnvVar {
 	return []corev1.EnvVar{{
 		Name: passwordEnvVar,
 		ValueFrom: &corev1.EnvVarSource{
@@ -297,14 +297,14 @@ type servers struct {
 	exporter *appsv1.Deployment
 }
 
-func (s servers) Status() cachev1alpha1.Status {
+func (s servers) Status() cachev1alpha1.InstanceStatus {
 	switch {
 	case !isReady(s.server):
-		return cachev1alpha1.Status{Ready: false, Message: "Waiting for Redis"}
+		return cachev1alpha1.InstanceStatus{Ready: false, Message: "Waiting for Redis"}
 	case s.exporter != nil && !isReady(s.exporter):
-		return cachev1alpha1.Status{Ready: false, Message: "Waiting for Redis exporter"}
+		return cachev1alpha1.InstanceStatus{Ready: false, Message: "Waiting for Redis exporter"}
 	default:
-		return cachev1alpha1.Status{Ready: true, Message: "Redis instance is ready"}
+		return cachev1alpha1.InstanceStatus{Ready: true, Message: "Redis instance is ready"}
 	}
 }
 

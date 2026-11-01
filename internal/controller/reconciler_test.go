@@ -141,28 +141,28 @@ func TestReconcileUpdatesStatus(t *testing.T) {
 		name     string
 		exporter *string
 		ready    []string
-		want     cachev1alpha1.Status
+		want     cachev1alpha1.InstanceStatus
 	}{
 		{
 			name: "redis not ready",
-			want: cachev1alpha1.Status{Message: "Waiting for Redis"},
+			want: cachev1alpha1.InstanceStatus{Message: "Waiting for Redis"},
 		},
 		{
 			name:  "redis ready",
 			ready: []string{"cache"},
-			want:  cachev1alpha1.Status{Ready: true, Message: "Redis instance is ready"},
+			want:  cachev1alpha1.InstanceStatus{Ready: true, Message: "Redis instance is ready"},
 		},
 		{
 			name:     "exporter not ready",
 			exporter: new("bitnami/redis-exporter:latest"),
 			ready:    []string{"cache"},
-			want:     cachev1alpha1.Status{Message: "Waiting for Redis exporter"},
+			want:     cachev1alpha1.InstanceStatus{Message: "Waiting for Redis exporter"},
 		},
 		{
 			name:     "redis and exporter ready",
 			exporter: new("bitnami/redis-exporter:latest"),
 			ready:    []string{"cache", "cache-exporter"},
-			want:     cachev1alpha1.Status{Ready: true, Message: "Redis instance is ready"},
+			want:     cachev1alpha1.InstanceStatus{Ready: true, Message: "Redis instance is ready"},
 		},
 	}
 
@@ -178,7 +178,7 @@ func TestReconcileUpdatesStatus(t *testing.T) {
 			require.NoError(t, err)
 			var current cachev1alpha1.Instance
 			require.NoError(t, r.Get(ctx, request().NamespacedName, &current))
-			assert.Equal(t, cachev1alpha1.Status{Message: "Waiting for Redis"}, current.Status)
+			assert.Equal(t, cachev1alpha1.InstanceStatus{Message: "Waiting for Redis"}, current.Status)
 
 			// mark deployments as ready and reconcile
 			for _, name := range tt.ready {
@@ -263,20 +263,20 @@ func TestInstanceStatus(t *testing.T) {
 	tests := []struct {
 		name string
 		s    servers
-		want cachev1alpha1.Status
+		want cachev1alpha1.InstanceStatus
 	}{
-		{"redis deployment not ready", servers{server: depNotReady}, cachev1alpha1.Status{Message: "Waiting for Redis"}},
-		{"redis deployment outdated", servers{server: depOutdated}, cachev1alpha1.Status{Message: "Waiting for Redis"}},
-		{"redis deployment ready, no exporter", servers{server: depReady}, cachev1alpha1.Status{Ready: true, Message: "Redis instance is ready"}},
-		{"redis deployment not ready, exporter ready", servers{server: depNotReady, exporter: depReady}, cachev1alpha1.Status{Message: "Waiting for Redis"}},
-		{"redis deployment ready, exporter not ready", servers{server: depReady, exporter: depNotReady}, cachev1alpha1.Status{Message: "Waiting for Redis exporter"}},
-		{"redis deployment and exporter ready", servers{server: depReady, exporter: depReady}, cachev1alpha1.Status{Ready: true, Message: "Redis instance is ready"}},
-		{"redis statefulSet not ready", servers{server: sfsNotReady}, cachev1alpha1.Status{Message: "Waiting for Redis"}},
-		{"redis statefulSet outdated", servers{server: sfsOutdated}, cachev1alpha1.Status{Message: "Waiting for Redis"}},
-		{"redis statefulSet ready, no exporter", servers{server: sfsReady}, cachev1alpha1.Status{Ready: true, Message: "Redis instance is ready"}},
-		{"redis statefulSet not ready, exporter ready", servers{server: sfsNotReady, exporter: depReady}, cachev1alpha1.Status{Message: "Waiting for Redis"}},
-		{"redis statefulSet ready, exporter not ready", servers{server: sfsReady, exporter: depNotReady}, cachev1alpha1.Status{Message: "Waiting for Redis exporter"}},
-		{"redis statefulSet and exporter ready", servers{server: sfsReady, exporter: depReady}, cachev1alpha1.Status{Ready: true, Message: "Redis instance is ready"}},
+		{"redis deployment not ready", servers{server: depNotReady}, cachev1alpha1.InstanceStatus{Message: "Waiting for Redis"}},
+		{"redis deployment outdated", servers{server: depOutdated}, cachev1alpha1.InstanceStatus{Message: "Waiting for Redis"}},
+		{"redis deployment ready, no exporter", servers{server: depReady}, cachev1alpha1.InstanceStatus{Ready: true, Message: "Redis instance is ready"}},
+		{"redis deployment not ready, exporter ready", servers{server: depNotReady, exporter: depReady}, cachev1alpha1.InstanceStatus{Message: "Waiting for Redis"}},
+		{"redis deployment ready, exporter not ready", servers{server: depReady, exporter: depNotReady}, cachev1alpha1.InstanceStatus{Message: "Waiting for Redis exporter"}},
+		{"redis deployment and exporter ready", servers{server: depReady, exporter: depReady}, cachev1alpha1.InstanceStatus{Ready: true, Message: "Redis instance is ready"}},
+		{"redis statefulSet not ready", servers{server: sfsNotReady}, cachev1alpha1.InstanceStatus{Message: "Waiting for Redis"}},
+		{"redis statefulSet outdated", servers{server: sfsOutdated}, cachev1alpha1.InstanceStatus{Message: "Waiting for Redis"}},
+		{"redis statefulSet ready, no exporter", servers{server: sfsReady}, cachev1alpha1.InstanceStatus{Ready: true, Message: "Redis instance is ready"}},
+		{"redis statefulSet not ready, exporter ready", servers{server: sfsNotReady, exporter: depReady}, cachev1alpha1.InstanceStatus{Message: "Waiting for Redis"}},
+		{"redis statefulSet ready, exporter not ready", servers{server: sfsReady, exporter: depNotReady}, cachev1alpha1.InstanceStatus{Message: "Waiting for Redis exporter"}},
+		{"redis statefulSet and exporter ready", servers{server: sfsReady, exporter: depReady}, cachev1alpha1.InstanceStatus{Ready: true, Message: "Redis instance is ready"}},
 	}
 
 	for _, tt := range tests {
@@ -296,7 +296,7 @@ func TestRedisDeployment(t *testing.T) {
 			instance: &cachev1alpha1.Instance{
 				Name:      "test",
 				Namespace: "default",
-				Spec: cachev1alpha1.Spec{
+				Spec: cachev1alpha1.InstanceSpec{
 					Image: "redis:latest",
 				},
 			},
@@ -306,9 +306,9 @@ func TestRedisDeployment(t *testing.T) {
 			instance: &cachev1alpha1.Instance{
 				Name:      "test",
 				Namespace: "default",
-				Spec: cachev1alpha1.Spec{
+				Spec: cachev1alpha1.InstanceSpec{
 					Image: "redis:latest",
-					Credentials: &cachev1alpha1.Credentials{
+					Credentials: &cachev1alpha1.RedisCredentials{
 						SecretName:  "redis-credentials",
 						PasswordKey: "redis-password",
 					},
@@ -320,7 +320,7 @@ func TestRedisDeployment(t *testing.T) {
 			instance: &cachev1alpha1.Instance{
 				Name:      "test",
 				Namespace: "default",
-				Spec: cachev1alpha1.Spec{
+				Spec: cachev1alpha1.InstanceSpec{
 					Image: "redis:latest",
 					Persistence: &corev1.VolumeSource{
 						PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
@@ -367,7 +367,7 @@ func TestRedisExporterDeployment(t *testing.T) {
 			instance: &cachev1alpha1.Instance{
 				Name:      "test",
 				Namespace: "default",
-				Spec: cachev1alpha1.Spec{
+				Spec: cachev1alpha1.InstanceSpec{
 					Exporter: new("foo"),
 				},
 			},
@@ -377,9 +377,9 @@ func TestRedisExporterDeployment(t *testing.T) {
 			instance: &cachev1alpha1.Instance{
 				Name:      "test",
 				Namespace: "default",
-				Spec: cachev1alpha1.Spec{
+				Spec: cachev1alpha1.InstanceSpec{
 					Exporter: new("foo"),
-					Credentials: &cachev1alpha1.Credentials{
+					Credentials: &cachev1alpha1.RedisCredentials{
 						SecretName:  "foo",
 						PasswordKey: "bar",
 					},
@@ -450,6 +450,6 @@ func request() reconcile.Request {
 func instance() *cachev1alpha1.Instance {
 	return &cachev1alpha1.Instance{
 		Name: "cache", Namespace: "default",
-		Spec: cachev1alpha1.Spec{Image: "redis:8"},
+		Spec: cachev1alpha1.InstanceSpec{Image: "redis:8"},
 	}
 }
