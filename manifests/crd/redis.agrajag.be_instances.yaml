@@ -37,7 +37,8 @@ spec:
           metadata:
             type: object
           spec:
-            description: Spec describes a single Redis server managed by this controller.
+            description: InstanceSpec describes a single Redis server managed by this
+              controller.
             properties:
               credentials:
                 description: |-
@@ -2060,7 +2061,7 @@ spec:
             - image
             type: object
           status:
-            description: Status contains the status of a RedisInstance resource.
+            description: InstanceStatus contains the status of a RedisInstance resource.
             properties:
               message:
                 type: string
