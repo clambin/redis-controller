@@ -214,6 +214,7 @@ func TestArtifacts_InstanceStatus(t *testing.T) {
 	depOutdated := &appsv1.Deployment{Status: appsv1.DeploymentStatus{UpdatedReplicas: 1, AvailableReplicas: 1}}
 	depOutdated.Generation = 2
 	depOutdated.Status.ObservedGeneration = 1
+	depUnavailable := &appsv1.Deployment{Status: appsv1.DeploymentStatus{UpdatedReplicas: 1, AvailableReplicas: 1, UnavailableReplicas: 1}}
 	sfsReady := &appsv1.StatefulSet{Status: appsv1.StatefulSetStatus{UpdatedReplicas: 1, AvailableReplicas: 1}}
 	sfsNotReady := &appsv1.StatefulSet{}
 	sfsOutdated := &appsv1.StatefulSet{Status: appsv1.StatefulSetStatus{UpdatedReplicas: 1, AvailableReplicas: 1}}
@@ -231,6 +232,7 @@ func TestArtifacts_InstanceStatus(t *testing.T) {
 		{"redis not ready, exporter ready", artifacts{redisServer: sfsNotReady, exporter: depReady}, cachev1alpha1.InstanceStatus{Message: "Waiting for Redis"}},
 		{"redis ready, exporter not ready", artifacts{redisServer: sfsReady, exporter: depNotReady}, cachev1alpha1.InstanceStatus{Message: "Waiting for Redis exporter"}},
 		{"redis and exporter ready", artifacts{redisServer: sfsReady, exporter: depReady}, cachev1alpha1.InstanceStatus{Ready: true, Message: "Redis instance is ready"}},
+		{"redis ready, exporter has unavailable replica", artifacts{redisServer: sfsReady, exporter: depUnavailable}, cachev1alpha1.InstanceStatus{Message: "Waiting for Redis exporter"}},
 	}
 
 	for _, tt := range tests {
