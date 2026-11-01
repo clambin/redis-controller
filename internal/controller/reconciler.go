@@ -9,6 +9,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -47,31 +48,35 @@ func (r *RedisInstanceReconciler) Reconcile(ctx context.Context, req reconcile.R
 	ctx = ctrl.LoggerInto(ctx, log)
 	log.Info("Reconciling RedisInstance")
 
-	result, srvrs, err := r.reconcile(ctx, &redis)
+	result, err := r.reconcile(ctx, &redis)
 	if err != nil {
 		log.Error(err, "failed to reconcile RedisInstance", "err", err)
 		return result, err
 	}
-	return result, r.updateStatus(ctx, &redis, srvrs.Status())
+	if err = r.updateStatus(ctx, &redis); err != nil {
+		log.Error(err, "failed to update RedisInstance status", "err", err)
+		return reconcile.Result{}, err
+	}
+	return result, nil
 }
 
 // reconcile converges the child resources of the RedisInstance to the desired state.
-func (r *RedisInstanceReconciler) reconcile(ctx context.Context, redis *cachev1alpha1.Instance) (reconcile.Result, servers, error) {
+func (r *RedisInstanceReconciler) reconcile(ctx context.Context, redis *cachev1alpha1.Instance) (reconcile.Result, error) {
 	sfs := &appsv1.StatefulSet{Name: redis.Name, Namespace: redis.Namespace}
 	if err := r.reconcileChild(ctx, redis, "redis statefulSet", sfs, func() { redisStatefulSet(sfs, redis) }); err != nil {
-		return reconcile.Result{}, servers{}, err
+		return reconcile.Result{}, err
 	}
 
 	svc := &corev1.Service{Name: redis.Name, Namespace: redis.Namespace}
 	if err := r.reconcileChild(ctx, redis, "service", svc, func() { redisService(svc, redis) }); err != nil {
-		return reconcile.Result{}, servers{}, err
+		return reconcile.Result{}, err
 	}
 
-	exporter, err := r.reconcileExporter(ctx, redis)
+	_, err := r.reconcileExporter(ctx, redis)
 	if err != nil {
-		return reconcile.Result{}, servers{}, err
+		return reconcile.Result{}, err
 	}
-	return reconcile.Result{}, servers{server: sfs, service: svc, exporter: exporter}, nil
+	return reconcile.Result{}, nil
 }
 
 // reconcileExporter creates or patches the exporter deployment. If no exporter is requested, any existing one is removed.
@@ -123,7 +128,24 @@ func (r *RedisInstanceReconciler) reconcileChild(ctx context.Context, redis *cac
 }
 
 // updateStatus patches the status of the RedisInstance, if it changed.
-func (r *RedisInstanceReconciler) updateStatus(ctx context.Context, redis *cachev1alpha1.Instance, status cachev1alpha1.InstanceStatus) error {
+func (r *RedisInstanceReconciler) updateStatus(ctx context.Context, redis *cachev1alpha1.Instance) error {
+	var redisServer appsv1.StatefulSet
+	if err := r.Get(ctx, types.NamespacedName{Name: redis.Name, Namespace: redis.Namespace}, &redisServer); err != nil {
+		return fmt.Errorf("failed to get RedisInstance StatefulSet: %w", err)
+	}
+	var service corev1.Service
+	if err := r.Get(ctx, types.NamespacedName{Name: redis.Name, Namespace: redis.Namespace}, &service); err != nil {
+		return fmt.Errorf("failed to get RedisInstance Service: %w", err)
+	}
+	var exporter *appsv1.Deployment
+	if redis.Spec.Exporter != nil {
+		exporter = &appsv1.Deployment{}
+		if err := r.Get(ctx, types.NamespacedName{Name: redis.Name + "-exporter", Namespace: redis.Namespace}, exporter); err != nil {
+			return fmt.Errorf("failed to get RedisInstance Exporter Deployment: %w", err)
+		}
+	}
+
+	status := instanceStatus(redisServer, service, exporter)
 	if redis.Status == status {
 		return nil
 	}
@@ -252,6 +274,17 @@ func exporterName(redis *cachev1alpha1.Instance) string {
 
 func labels(name string) map[string]string {
 	return map[string]string{appLabel: name}
+}
+
+func instanceStatus(redisServer appsv1.StatefulSet, _ corev1.Service, exporter *appsv1.Deployment) cachev1alpha1.InstanceStatus {
+	switch {
+	case !isReady(&redisServer):
+		return cachev1alpha1.InstanceStatus{Ready: false, Message: "Waiting for Redis"}
+	case exporter != nil && !isReady(exporter):
+		return cachev1alpha1.InstanceStatus{Ready: false, Message: "Waiting for Redis exporter"}
+	default:
+		return cachev1alpha1.InstanceStatus{Ready: true, Message: "Redis instance is ready"}
+	}
 }
 
 type servers struct {
