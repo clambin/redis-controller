@@ -235,7 +235,7 @@ func TestArtifacts_InstanceStatus(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, tt.artifacts.instanceStatus())
+			assert.Equal(t, tt.want, tt.instanceStatus())
 		})
 	}
 }
