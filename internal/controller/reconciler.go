@@ -129,12 +129,12 @@ func (r *RedisInstanceReconciler) reconcileChild(ctx context.Context, redis *cac
 
 // updateStatus patches the status of the RedisInstance, if it changed.
 func (r *RedisInstanceReconciler) updateStatus(ctx context.Context, redis *cachev1alpha1.Instance) error {
-	var redisServer appsv1.StatefulSet
-	if err := r.Get(ctx, types.NamespacedName{Name: redis.Name, Namespace: redis.Namespace}, &redisServer); err != nil {
+	redisServer := &appsv1.StatefulSet{}
+	if err := r.Get(ctx, types.NamespacedName{Name: redis.Name, Namespace: redis.Namespace}, redisServer); err != nil {
 		return fmt.Errorf("failed to get RedisInstance StatefulSet: %w", err)
 	}
-	var service corev1.Service
-	if err := r.Get(ctx, types.NamespacedName{Name: redis.Name, Namespace: redis.Namespace}, &service); err != nil {
+	service := &corev1.Service{}
+	if err := r.Get(ctx, types.NamespacedName{Name: redis.Name, Namespace: redis.Namespace}, service); err != nil {
 		return fmt.Errorf("failed to get RedisInstance Service: %w", err)
 	}
 	var exporter *appsv1.Deployment
@@ -276,28 +276,11 @@ func labels(name string) map[string]string {
 	return map[string]string{appLabel: name}
 }
 
-func instanceStatus(redisServer appsv1.StatefulSet, _ corev1.Service, exporter *appsv1.Deployment) cachev1alpha1.InstanceStatus {
+func instanceStatus(redisServer *appsv1.StatefulSet, _ *corev1.Service, exporter *appsv1.Deployment) cachev1alpha1.InstanceStatus {
 	switch {
-	case !isReady(&redisServer):
+	case !isReady(redisServer):
 		return cachev1alpha1.InstanceStatus{Ready: false, Message: "Waiting for Redis"}
 	case exporter != nil && !isReady(exporter):
-		return cachev1alpha1.InstanceStatus{Ready: false, Message: "Waiting for Redis exporter"}
-	default:
-		return cachev1alpha1.InstanceStatus{Ready: true, Message: "Redis instance is ready"}
-	}
-}
-
-type servers struct {
-	server   *appsv1.StatefulSet
-	exporter *appsv1.Deployment
-	service  *corev1.Service
-}
-
-func (s servers) Status() cachev1alpha1.InstanceStatus {
-	switch {
-	case !isReady(s.server):
-		return cachev1alpha1.InstanceStatus{Ready: false, Message: "Waiting for Redis"}
-	case s.exporter != nil && !isReady(s.exporter):
 		return cachev1alpha1.InstanceStatus{Ready: false, Message: "Waiting for Redis exporter"}
 	default:
 		return cachev1alpha1.InstanceStatus{Ready: true, Message: "Redis instance is ready"}
