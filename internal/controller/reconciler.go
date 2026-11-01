@@ -9,7 +9,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -48,12 +47,13 @@ func (r *RedisInstanceReconciler) Reconcile(ctx context.Context, req reconcile.R
 	ctx = ctrl.LoggerInto(ctx, log)
 	log.Info("Reconciling RedisInstance")
 
-	result, err := r.reconcile(ctx, &redis)
+	var a artifacts
+	result, err := r.reconcile(ctx, &redis, &a)
 	if err != nil {
 		log.Error(err, "failed to reconcile RedisInstance", "err", err)
 		return result, err
 	}
-	if err = r.updateStatus(ctx, &redis); err != nil {
+	if err = r.updateStatus(ctx, &redis, a); err != nil {
 		log.Error(err, "failed to update RedisInstance status", "err", err)
 		return reconcile.Result{}, err
 	}
@@ -61,18 +61,19 @@ func (r *RedisInstanceReconciler) Reconcile(ctx context.Context, req reconcile.R
 }
 
 // reconcile converges the child resources of the RedisInstance to the desired state.
-func (r *RedisInstanceReconciler) reconcile(ctx context.Context, redis *cachev1alpha1.Instance) (reconcile.Result, error) {
-	sfs := &appsv1.StatefulSet{Name: redis.Name, Namespace: redis.Namespace}
-	if err := r.reconcileChild(ctx, redis, "redis statefulSet", sfs, func() { redisStatefulSet(sfs, redis) }); err != nil {
+func (r *RedisInstanceReconciler) reconcile(ctx context.Context, redis *cachev1alpha1.Instance, artifacts *artifacts) (reconcile.Result, error) {
+	artifacts.redisServer = &appsv1.StatefulSet{Name: redis.Name, Namespace: redis.Namespace}
+	if err := r.reconcileChild(ctx, redis, "redis statefulSet", artifacts.redisServer, func() { redisStatefulSet(artifacts.redisServer, redis) }); err != nil {
 		return reconcile.Result{}, err
 	}
 
-	svc := &corev1.Service{Name: redis.Name, Namespace: redis.Namespace}
-	if err := r.reconcileChild(ctx, redis, "service", svc, func() { redisService(svc, redis) }); err != nil {
+	artifacts.service = &corev1.Service{Name: redis.Name, Namespace: redis.Namespace}
+	if err := r.reconcileChild(ctx, redis, "service", artifacts.service, func() { redisService(artifacts.service, redis) }); err != nil {
 		return reconcile.Result{}, err
 	}
 
-	_, err := r.reconcileExporter(ctx, redis)
+	var err error
+	artifacts.exporter, err = r.reconcileExporter(ctx, redis)
 	if err != nil {
 		return reconcile.Result{}, err
 	}
@@ -128,24 +129,8 @@ func (r *RedisInstanceReconciler) reconcileChild(ctx context.Context, redis *cac
 }
 
 // updateStatus patches the status of the RedisInstance, if it changed.
-func (r *RedisInstanceReconciler) updateStatus(ctx context.Context, redis *cachev1alpha1.Instance) error {
-	redisServer := &appsv1.StatefulSet{}
-	if err := r.Get(ctx, types.NamespacedName{Name: redis.Name, Namespace: redis.Namespace}, redisServer); err != nil {
-		return fmt.Errorf("failed to get RedisInstance StatefulSet: %w", err)
-	}
-	service := &corev1.Service{}
-	if err := r.Get(ctx, types.NamespacedName{Name: redis.Name, Namespace: redis.Namespace}, service); err != nil {
-		return fmt.Errorf("failed to get RedisInstance Service: %w", err)
-	}
-	var exporter *appsv1.Deployment
-	if redis.Spec.Exporter != nil {
-		exporter = &appsv1.Deployment{}
-		if err := r.Get(ctx, types.NamespacedName{Name: redis.Name + "-exporter", Namespace: redis.Namespace}, exporter); err != nil {
-			return fmt.Errorf("failed to get RedisInstance Exporter Deployment: %w", err)
-		}
-	}
-
-	status := instanceStatus(redisServer, service, exporter)
+func (r *RedisInstanceReconciler) updateStatus(ctx context.Context, redis *cachev1alpha1.Instance, a artifacts) error {
+	status := a.instanceStatus()
 	if redis.Status == status {
 		return nil
 	}
@@ -259,12 +244,10 @@ func redisExporterDeployment(dep *appsv1.Deployment, redis *cachev1alpha1.Instan
 func passwordEnv(credentials *cachev1alpha1.RedisCredentials) []corev1.EnvVar {
 	return []corev1.EnvVar{{
 		Name: passwordEnvVar,
-		ValueFrom: &corev1.EnvVarSource{
-			SecretKeyRef: &corev1.SecretKeySelector{
-				Name: credentials.SecretName,
-				Key:  credentials.PasswordKey,
-			},
-		},
+		ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+			Name: credentials.SecretName,
+			Key:  credentials.PasswordKey,
+		}},
 	}}
 }
 
@@ -276,11 +259,17 @@ func labels(name string) map[string]string {
 	return map[string]string{appLabel: name}
 }
 
-func instanceStatus(redisServer *appsv1.StatefulSet, _ *corev1.Service, exporter *appsv1.Deployment) cachev1alpha1.InstanceStatus {
+type artifacts struct {
+	redisServer *appsv1.StatefulSet
+	service     *corev1.Service
+	exporter    *appsv1.Deployment
+}
+
+func (a artifacts) instanceStatus() cachev1alpha1.InstanceStatus {
 	switch {
-	case !isReady(redisServer):
+	case !isReady(a.redisServer):
 		return cachev1alpha1.InstanceStatus{Ready: false, Message: "Waiting for Redis"}
-	case exporter != nil && !isReady(exporter):
+	case a.exporter != nil && !isReady(a.exporter):
 		return cachev1alpha1.InstanceStatus{Ready: false, Message: "Waiting for Redis exporter"}
 	default:
 		return cachev1alpha1.InstanceStatus{Ready: true, Message: "Redis instance is ready"}
