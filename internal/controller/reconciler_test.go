@@ -240,8 +240,8 @@ func TestArtifacts_InstanceStatus(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.artifacts.service = &corev1.Service{}
-			status := tt.artifacts.instanceStatus()
+			tt.service = &corev1.Service{}
+			status := tt.instanceStatus()
 
 			got := make(map[string]metav1.ConditionStatus, len(status.Conditions))
 			for _, c := range status.Conditions {

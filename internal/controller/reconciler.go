@@ -272,8 +272,8 @@ func (a artifacts) instanceStatus() cachev1alpha1.InstanceStatus {
 		status         metav1.ConditionStatus
 		reason         string
 		message        string
+		instanceReady  = metav1.ConditionTrue
 	)
-	instanceReady := true
 	// Redis Server
 	switch isReady(a.redisServer) {
 	case true:
@@ -281,7 +281,7 @@ func (a artifacts) instanceStatus() cachev1alpha1.InstanceStatus {
 		reason = "Available"
 		message = "Redis server is ready"
 	case false:
-		instanceReady = false
+		instanceReady = metav1.ConditionFalse
 		status = metav1.ConditionFalse
 		reason = "Progressing"
 		message = "Waiting for Redis server"
@@ -299,7 +299,7 @@ func (a artifacts) instanceStatus() cachev1alpha1.InstanceStatus {
 		reason = "Available"
 		message = "Redis service is ready"
 	default:
-		instanceReady = false
+		instanceReady = metav1.ConditionFalse
 		status = metav1.ConditionFalse
 		reason = "Progressing"
 		message = "Waiting for Redis service"
@@ -318,7 +318,7 @@ func (a artifacts) instanceStatus() cachev1alpha1.InstanceStatus {
 			reason = "Available"
 			message = "Exporter is ready"
 		case false:
-			instanceReady = false
+			instanceReady = metav1.ConditionFalse
 			status = metav1.ConditionFalse
 			reason = "Progressing"
 			message = "Waiting for exporter"
@@ -331,18 +331,17 @@ func (a artifacts) instanceStatus() cachev1alpha1.InstanceStatus {
 		})
 	}
 	switch instanceReady {
-	case true:
-		status = metav1.ConditionTrue
+	case metav1.ConditionTrue:
 		reason = "Available"
 		message = "All components are ready"
-	case false:
-		status = metav1.ConditionFalse
+	case metav1.ConditionFalse:
+		// TODO: why does Goland think this is unreachable?
 		reason = "Progressing"
 		message = "Waiting for child components"
 	}
 	instanceStatus.Conditions = append(instanceStatus.Conditions, metav1.Condition{
 		Type:    "Ready",
-		Status:  status,
+		Status:  instanceReady,
 		Reason:  reason,
 		Message: message,
 	})
