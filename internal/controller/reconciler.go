@@ -137,8 +137,11 @@ func (r *RedisInstanceReconciler) updateStatus(ctx context.Context, redis *cache
 		return nil
 	}
 	before := redis.DeepCopy()
-	redis.Status.Conditions = nil
+	previous := redis.Status.Conditions
 	for _, cond := range status.Conditions {
+		if old := meta.FindStatusCondition(previous, cond.Type); old != nil && old.Status == cond.Status {
+			cond.LastTransitionTime = old.LastTransitionTime
+		}
 		meta.SetStatusCondition(&redis.Status.Conditions, cond)
 	}
 	if err := r.Status().Patch(ctx, redis, client.MergeFrom(before)); err != nil {
