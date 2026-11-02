@@ -338,12 +338,10 @@ func (a artifacts) instanceStatus() cachev1alpha1.InstanceStatus {
 			Message: message,
 		})
 	}
-	switch instanceReady {
-	case metav1.ConditionTrue:
+	if instanceReady == metav1.ConditionTrue {
 		reason = "Available"
 		message = "All components are ready"
-	case metav1.ConditionFalse:
-		// TODO: why does Goland think this is unreachable?
+	} else {
 		reason = "Progressing"
 		message = "Waiting for child components"
 	}
