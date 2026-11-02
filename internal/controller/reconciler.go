@@ -7,6 +7,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -133,17 +134,15 @@ func (r *RedisInstanceReconciler) reconcileChild(ctx context.Context, redis *cac
 func (r *RedisInstanceReconciler) updateStatus(ctx context.Context, redis *cachev1alpha1.Instance, a artifacts) error {
 	status := a.instanceStatus()
 	before := redis.DeepCopy()
-	var changed bool
 	previous := redis.Status.Conditions
+	redis.Status.Conditions = nil
 	for _, cond := range status.Conditions {
 		if old := meta.FindStatusCondition(previous, cond.Type); old != nil && old.Status == cond.Status {
 			cond.LastTransitionTime = old.LastTransitionTime
 		}
-		if meta.SetStatusCondition(&redis.Status.Conditions, cond) {
-			changed = true
-		}
+		meta.SetStatusCondition(&redis.Status.Conditions, cond)
 	}
-	if !changed {
+	if equality.Semantic.DeepEqual(before.Status.Conditions, redis.Status.Conditions) {
 		return nil
 	}
 	if err := r.Status().Patch(ctx, redis, client.MergeFrom(before)); err != nil {
