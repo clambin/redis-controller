@@ -3,7 +3,6 @@ package controller
 import (
 	"context"
 	"fmt"
-	"slices"
 	"strconv"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -133,16 +132,19 @@ func (r *RedisInstanceReconciler) reconcileChild(ctx context.Context, redis *cac
 // updateStatus patches the status of the RedisInstance, if it changed.
 func (r *RedisInstanceReconciler) updateStatus(ctx context.Context, redis *cachev1alpha1.Instance, a artifacts) error {
 	status := a.instanceStatus()
-	if slices.Equal(redis.Status.Conditions, status.Conditions) {
-		return nil
-	}
 	before := redis.DeepCopy()
+	var changed bool
 	previous := redis.Status.Conditions
 	for _, cond := range status.Conditions {
 		if old := meta.FindStatusCondition(previous, cond.Type); old != nil && old.Status == cond.Status {
 			cond.LastTransitionTime = old.LastTransitionTime
 		}
-		meta.SetStatusCondition(&redis.Status.Conditions, cond)
+		if meta.SetStatusCondition(&redis.Status.Conditions, cond) {
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
 	}
 	if err := r.Status().Patch(ctx, redis, client.MergeFrom(before)); err != nil {
 		return fmt.Errorf("status: %w", err)
