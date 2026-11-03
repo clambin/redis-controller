@@ -69,10 +69,11 @@ type RedisCredentials struct {
 
 // InstanceStatus contains the status of a RedisInstance resource.
 type InstanceStatus struct {
+	// Conditions represent the observed state of the Redis instance.
 	// +optional
-	Message string `json:"message,omitempty"`
-	// +optional
-	Ready bool `json:"ready,omitempty"`
+	// +listType=map
+	// +listMapKey=type
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // InstanceList contains a list of Instance resources.

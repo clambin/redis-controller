@@ -7,6 +7,8 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -131,11 +133,19 @@ func (r *RedisInstanceReconciler) reconcileChild(ctx context.Context, redis *cac
 // updateStatus patches the status of the RedisInstance, if it changed.
 func (r *RedisInstanceReconciler) updateStatus(ctx context.Context, redis *cachev1alpha1.Instance, a artifacts) error {
 	status := a.instanceStatus()
-	if redis.Status == status {
+	before := redis.DeepCopy()
+	previous := redis.Status.Conditions
+	redis.Status.Conditions = nil
+	for _, cond := range status.Conditions {
+		cond.ObservedGeneration = redis.Generation
+		if old := meta.FindStatusCondition(previous, cond.Type); old != nil && old.Status == cond.Status {
+			cond.LastTransitionTime = old.LastTransitionTime
+		}
+		meta.SetStatusCondition(&redis.Status.Conditions, cond)
+	}
+	if equality.Semantic.DeepEqual(before.Status.Conditions, redis.Status.Conditions) {
 		return nil
 	}
-	before := redis.DeepCopy()
-	redis.Status = status
 	if err := r.Status().Patch(ctx, redis, client.MergeFrom(before)); err != nil {
 		return fmt.Errorf("status: %w", err)
 	}
@@ -266,14 +276,84 @@ type artifacts struct {
 }
 
 func (a artifacts) instanceStatus() cachev1alpha1.InstanceStatus {
-	switch {
-	case !isReady(a.redisServer):
-		return cachev1alpha1.InstanceStatus{Ready: false, Message: "Waiting for Redis"}
-	case a.exporter != nil && !isReady(a.exporter):
-		return cachev1alpha1.InstanceStatus{Ready: false, Message: "Waiting for Redis exporter"}
-	default:
-		return cachev1alpha1.InstanceStatus{Ready: true, Message: "Redis instance is ready"}
+	var (
+		instanceStatus cachev1alpha1.InstanceStatus
+		status         metav1.ConditionStatus
+		reason         string
+		message        string
+		instanceReady  = metav1.ConditionTrue
+	)
+	// Redis Server
+	switch isReady(a.redisServer) {
+	case true:
+		status = metav1.ConditionTrue
+		reason = "Available"
+		message = "Redis server is ready"
+	case false:
+		instanceReady = metav1.ConditionFalse
+		status = metav1.ConditionFalse
+		reason = "Progressing"
+		message = "Waiting for Redis server"
 	}
+	instanceStatus.Conditions = append(instanceStatus.Conditions, metav1.Condition{
+		Type:    "RedisServer",
+		Status:  status,
+		Reason:  reason,
+		Message: message,
+	})
+	// Redis Service
+	switch {
+	case a.service != nil:
+		status = metav1.ConditionTrue
+		reason = "Available"
+		message = "Redis service is ready"
+	default:
+		instanceReady = metav1.ConditionFalse
+		status = metav1.ConditionFalse
+		reason = "Progressing"
+		message = "Waiting for Redis service"
+	}
+	instanceStatus.Conditions = append(instanceStatus.Conditions, metav1.Condition{
+		Type:    "RedisService",
+		Status:  status,
+		Reason:  reason,
+		Message: message,
+	})
+	// Exporter
+	if a.exporter != nil {
+		switch isReady(a.exporter) {
+		case true:
+			status = metav1.ConditionTrue
+			reason = "Available"
+			message = "Exporter is ready"
+		case false:
+			instanceReady = metav1.ConditionFalse
+			status = metav1.ConditionFalse
+			reason = "Progressing"
+			message = "Waiting for exporter"
+		}
+		instanceStatus.Conditions = append(instanceStatus.Conditions, metav1.Condition{
+			Type:    "Exporter",
+			Status:  status,
+			Reason:  reason,
+			Message: message,
+		})
+	}
+	if instanceReady == metav1.ConditionTrue {
+		reason = "Available"
+		message = "All components are ready"
+	} else {
+		reason = "Progressing"
+		message = "Waiting for child components"
+	}
+	instanceStatus.Conditions = append(instanceStatus.Conditions, metav1.Condition{
+		Type:    "Ready",
+		Status:  instanceReady,
+		Reason:  reason,
+		Message: message,
+	})
+
+	return instanceStatus
 }
 
 func isReady(srv client.Object) bool {
