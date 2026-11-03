@@ -137,6 +137,7 @@ func (r *RedisInstanceReconciler) updateStatus(ctx context.Context, redis *cache
 	previous := redis.Status.Conditions
 	redis.Status.Conditions = nil
 	for _, cond := range status.Conditions {
+		cond.ObservedGeneration = redis.Generation
 		if old := meta.FindStatusCondition(previous, cond.Type); old != nil && old.Status == cond.Status {
 			cond.LastTransitionTime = old.LastTransitionTime
 		}

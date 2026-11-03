@@ -138,6 +138,35 @@ func TestReconcileMissingParentDoesNothing(t *testing.T) {
 	require.True(t, k8serrors.IsNotFound(r.Get(ctx, request().NamespacedName, &statefulSet)))
 }
 
+func TestReconcileSetsObservedGeneration(t *testing.T) {
+	ctx := context.Background()
+	redis := instance()
+	redis.Generation = 3
+	r := newReconciler(t, redis)
+
+	_, err := r.Reconcile(ctx, request())
+	require.NoError(t, err)
+
+	var current cachev1alpha1.Instance
+	require.NoError(t, r.Get(ctx, request().NamespacedName, &current))
+	require.NotEmpty(t, current.Status.Conditions)
+	for _, c := range current.Status.Conditions {
+		assert.Equal(t, current.Generation, c.ObservedGeneration, c.Type)
+	}
+
+	// a new generation must be reflected in the conditions, even if their status didn't change
+	current.Generation++
+	require.NoError(t, r.Update(ctx, &current))
+	_, err = r.Reconcile(ctx, request())
+	require.NoError(t, err)
+
+	var updated cachev1alpha1.Instance
+	require.NoError(t, r.Get(ctx, request().NamespacedName, &updated))
+	for _, c := range updated.Status.Conditions {
+		assert.Equal(t, updated.Generation, c.ObservedGeneration, c.Type)
+	}
+}
+
 /*
 	func TestReconcileUpdatesStatus(t *testing.T) {
 		type ready struct {
