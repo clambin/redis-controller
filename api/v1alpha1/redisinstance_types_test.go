@@ -14,6 +14,6 @@ func TestAddToSchema(t *testing.T) {
 	require.NoError(t, v1alpha1.AddToScheme(s))
 	require.True(t, s.IsVersionRegistered(v1alpha1.GroupVersion))
 	knownTypes := s.KnownTypes(v1alpha1.GroupVersion)
-	assert.Equal(t, "v1alpha1.Instance", knownTypes["Instance"].String())
-	assert.Equal(t, "v1alpha1.InstanceList", knownTypes["InstanceList"].String())
+	assert.Equal(t, "v1alpha1.RedisInstance", knownTypes["RedisInstance"].String())
+	assert.Equal(t, "v1alpha1.RedisInstanceList", knownTypes["RedisInstanceList"].String())
 }

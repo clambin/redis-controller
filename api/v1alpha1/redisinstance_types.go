@@ -1,12 +1,12 @@
 // +kubebuilder:object:generate=true
 // +groupName=redis.agrajag.be
-// +kubebuilder:rbac:groups=redis.agrajag.be,resources=instances,verbs=get;list;watch
-// +kubebuilder:rbac:groups=redis.agrajag.be,resources=instances/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=redis.agrajag.be,resources=instances/finalizers,verbs=update
+// +kubebuilder:rbac:groups=redis.agrajag.be,resources=redisinstances,verbs=get;list;watch
+// +kubebuilder:rbac:groups=redis.agrajag.be,resources=redisinstances/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=redis.agrajag.be,resources=redisinstances/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="apps",resources=deployments;statefulsets,verbs=get;list;watch;create;update;patch;delete
 
-// Package v1alpha1 contains the API schema for Instance.
+// Package v1alpha1 contains the API schema for RedisInstance.
 package v1alpha1
 
 import (
@@ -23,15 +23,15 @@ import (
 var GroupVersion = schema.GroupVersion{Group: "redis.agrajag.be", Version: "v1alpha1"}
 
 func AddToScheme(scheme *runtime.Scheme) error {
-	scheme.AddKnownTypes(GroupVersion, &Instance{}, &InstanceList{})
+	scheme.AddKnownTypes(GroupVersion, &RedisInstance{}, &RedisInstanceList{})
 	metav1.AddToGroupVersion(scheme, GroupVersion)
 	return nil
 }
 
-// Instance is the schema for the Redis instances API.
+// RedisInstance is the schema for the Redis instances API.
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-type Instance struct {
+type RedisInstance struct {
 	Spec              InstanceSpec `json:"spec,omitempty"`
 	metav1.TypeMeta   `json:",inline"`
 	Status            InstanceStatus `json:"status,omitempty"`
@@ -40,22 +40,37 @@ type Instance struct {
 
 // InstanceSpec describes a single Redis server managed by this controller.
 type InstanceSpec struct {
+	// Server is the Redis server configuration.
+	Server ServerSpec `json:"server"`
+	// Exporter is the Redis exporter configuration. If not specified, the instances runs without exporter.
+	// +optional
+	Exporter *ExporterSpec `json:"exporter,omitempty"`
 	// Credentials define the Secret containing the credentials.
 	// If the Secret is not specified, Redis runs without authentication.
 	// +optional
 	Credentials *RedisCredentials `json:"credentials,omitempty"`
-	// Exporter is the Redis exporter container image, for example, bitnami/redis-exporter:latest
-	// If the Exporter is not specified, the controller will not create a Redis exporter.
-	// +kubebuilder:validation:MinLength=1
-	// +optional
-	Exporter *string `json:"exporter,omitempty"`
 	// Persistence is the Redis persistence configuration. If specified, Redis runs with persistence
 	// (i.e., --appendonly yes --appendfsync everysec). If no persistence is specified, Redis runs without persistence.
 	// +optional
 	Persistence *corev1.VolumeSource `json:"persistence,omitempty"`
+}
+
+type ServerSpec struct {
 	// Image is the Redis container image, for example, redis:8.
 	// +kubebuilder:validation:MinLength=1
 	Image string `json:"image"`
+	// Resources defines the resource requirements for the Redis server.
+	// +optional
+	Resources *corev1.ResourceRequirements `json:"resources"`
+}
+
+type ExporterSpec struct {
+	// Image is the Redis exporter container image, for example, bitnami/redis-exporter:latest
+	// +kubebuilder:validation:MinLength=1
+	Image string `json:"image"`
+	// Resources defines the resource requirements for the Redis exporter.
+	// +optional
+	Resources *corev1.ResourceRequirements `json:"resources"`
 }
 
 type RedisCredentials struct {
@@ -76,10 +91,10 @@ type InstanceStatus struct {
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
-// InstanceList contains a list of Instance resources.
+// RedisInstanceList contains a list of RedisInstance resources.
 // +kubebuilder:object:root=true
-type InstanceList struct {
+type RedisInstanceList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []Instance `json:"items"`
+	Items           []RedisInstance `json:"items"`
 }

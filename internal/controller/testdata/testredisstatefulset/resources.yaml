@@ -8,7 +8,7 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: test
-  strategy: {}
+  serviceName: ""
   template:
     metadata:
       labels:
@@ -16,10 +16,9 @@ spec:
     spec:
       containers:
       - args:
+        - --save
         - --appendonly
-        - "yes"
-        - --appendfsync
-        - everysec
+        - "no"
         image: redis:latest
         imagePullPolicy: IfNotPresent
         name: redis
@@ -27,15 +26,14 @@ spec:
         - containerPort: 6379
           name: redis
           protocol: TCP
-        resources: {}
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
         terminationMessagePath: /dev/termination-log
         terminationMessagePolicy: File
-        volumeMounts:
-        - mountPath: /data
-          name: redis-data
       restartPolicy: Always
-      volumes:
-      - name: redis-data
-        persistentVolumeClaim:
-          claimName: redis-data
-status: {}
+  updateStrategy: {}
+status:
+  availableReplicas: 0
+  replicas: 0

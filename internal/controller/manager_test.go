@@ -18,7 +18,7 @@ func TestNewManager(t *testing.T) {
 	scheme := mgr.GetScheme()
 	require.True(t, scheme.IsVersionRegistered(v1alpha1.GroupVersion))
 	for _, gvk := range []schema.GroupVersionKind{
-		v1alpha1.GroupVersion.WithKind("Instance"),
+		v1alpha1.GroupVersion.WithKind("RedisInstance"),
 		// these don't really do what you'd think they do
 		appsv1.SchemeGroupVersion.WithKind("Deployment"),
 		appsv1.SchemeGroupVersion.WithKind("StatefulSet"),
