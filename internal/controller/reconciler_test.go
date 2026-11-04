@@ -14,6 +14,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -52,7 +53,7 @@ func TestReconcileCreatesDeploymentAndService(t *testing.T) {
 func TestReconcileCreatesDeploymentAndServiceAndExporter(t *testing.T) {
 	ctx := context.Background()
 	redis := instance()
-	redis.Spec.Exporter = new("bitnami/redis-exporter:latest")
+	redis.Spec.Exporter = &cachev1alpha1.ExporterSpec{Image: "bitnami/redis-exporter:latest"}
 	r := newReconciler(t, redis)
 
 	_, err := r.Reconcile(ctx, request())
@@ -94,9 +95,9 @@ func TestReconcileUpdatesImage(t *testing.T) {
 	require.NoError(t, err)
 
 	// update image and reconcile
-	var current cachev1alpha1.Instance
+	var current cachev1alpha1.RedisInstance
 	require.NoError(t, r.Get(ctx, request().NamespacedName, &current))
-	current.Spec.Image = "redis:8.2"
+	current.Spec.Server.Image = "redis:8.2"
 	require.NoError(t, r.Update(ctx, &current))
 	_, err = r.Reconcile(ctx, request())
 	require.NoError(t, err)
@@ -147,7 +148,7 @@ func TestReconcileSetsObservedGeneration(t *testing.T) {
 	_, err := r.Reconcile(ctx, request())
 	require.NoError(t, err)
 
-	var current cachev1alpha1.Instance
+	var current cachev1alpha1.RedisInstance
 	require.NoError(t, r.Get(ctx, request().NamespacedName, &current))
 	require.NotEmpty(t, current.Status.Conditions)
 	for _, c := range current.Status.Conditions {
@@ -160,85 +161,13 @@ func TestReconcileSetsObservedGeneration(t *testing.T) {
 	_, err = r.Reconcile(ctx, request())
 	require.NoError(t, err)
 
-	var updated cachev1alpha1.Instance
+	var updated cachev1alpha1.RedisInstance
 	require.NoError(t, r.Get(ctx, request().NamespacedName, &updated))
 	for _, c := range updated.Status.Conditions {
 		assert.Equal(t, updated.Generation, c.ObservedGeneration, c.Type)
 	}
 }
 
-/*
-	func TestReconcileUpdatesStatus(t *testing.T) {
-		type ready struct {
-			server   bool
-			exporter bool
-		}
-		tests := []struct {
-			name     string
-			exporter *string
-			ready    ready
-			want     cachev1alpha1.InstanceStatus
-		}{
-			{
-				name: "redis not ready",
-				want: cachev1alpha1.InstanceStatus{Message: "Waiting for Redis"},
-			},
-			{
-				name:  "redis ready",
-				ready: ready{server: true},
-				want:  cachev1alpha1.InstanceStatus{Ready: true, Message: "Redis instance is ready"},
-			},
-			{
-				name:     "exporter not ready",
-				exporter: new("bitnami/redis-exporter:latest"),
-				ready:    ready{server: true},
-				want:     cachev1alpha1.InstanceStatus{Message: "Waiting for Redis exporter"},
-			},
-			{
-				name:     "redis and exporter ready",
-				exporter: new("bitnami/redis-exporter:latest"),
-				ready:    ready{server: true, exporter: true},
-				want:     cachev1alpha1.InstanceStatus{Ready: true, Message: "Redis instance is ready"},
-			},
-		}
-
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				ctx := context.Background()
-				redis := instance()
-				redis.Spec.Exporter = tt.exporter
-				r := newReconciler(t, redis)
-
-				// initial reconcile creates the deployments, which are not ready yet
-				_, err := r.Reconcile(ctx, request())
-				require.NoError(t, err)
-				var current cachev1alpha1.Instance
-				require.NoError(t, r.Get(ctx, request().NamespacedName, &current))
-				assert.Equal(t, cachev1alpha1.InstanceStatus{Message: "Waiting for Redis"}, current.Status)
-
-				// mark components as ready and reconcile
-				if tt.ready.server {
-					var statefulSet appsv1.StatefulSet
-					require.NoError(t, r.Get(ctx, types.NamespacedName{Namespace: redis.Namespace, Name: redis.Name}, &statefulSet))
-					statefulSet.Status = appsv1.StatefulSetStatus{ObservedGeneration: statefulSet.Generation, UpdatedReplicas: 1, AvailableReplicas: 1}
-					require.NoError(t, r.Status().Update(ctx, &statefulSet))
-				}
-				if tt.ready.exporter {
-					var deployment appsv1.Deployment
-					require.NoError(t, r.Get(ctx, types.NamespacedName{Namespace: redis.Namespace, Name: redis.Name + "-exporter"}, &deployment))
-					deployment.Status = appsv1.DeploymentStatus{ObservedGeneration: deployment.Generation, UpdatedReplicas: 1, AvailableReplicas: 1}
-					require.NoError(t, r.Status().Update(ctx, &deployment))
-				}
-
-				_, err = r.Reconcile(ctx, request())
-				require.NoError(t, err)
-
-				require.NoError(t, r.Get(ctx, request().NamespacedName, &current))
-				assert.Equal(t, tt.want, current.Status)
-			})
-		}
-	}
-*/
 func TestArtifacts_InstanceStatus(t *testing.T) {
 	sfsReady := &appsv1.StatefulSet{Status: appsv1.StatefulSetStatus{UpdatedReplicas: 1, AvailableReplicas: 1}}
 	sfsNotReady := &appsv1.StatefulSet{}
@@ -287,25 +216,29 @@ func TestArtifacts_InstanceStatus(t *testing.T) {
 func TestRedisStatefulSet(t *testing.T) {
 	tests := []struct {
 		name     string
-		instance *cachev1alpha1.Instance
+		instance *cachev1alpha1.RedisInstance
 	}{
 		{
 			name: "simple",
-			instance: &cachev1alpha1.Instance{
+			instance: &cachev1alpha1.RedisInstance{
 				Name:      "test",
 				Namespace: "default",
 				Spec: cachev1alpha1.InstanceSpec{
-					Image: "redis:latest",
+					Server: cachev1alpha1.ServerSpec{
+						Image: "redis:latest",
+					},
 				},
 			},
 		},
 		{
 			name: "credentials",
-			instance: &cachev1alpha1.Instance{
+			instance: &cachev1alpha1.RedisInstance{
 				Name:      "test",
 				Namespace: "default",
 				Spec: cachev1alpha1.InstanceSpec{
-					Image: "redis:latest",
+					Server: cachev1alpha1.ServerSpec{
+						Image: "redis:latest",
+					},
 					Credentials: &cachev1alpha1.RedisCredentials{
 						SecretName:  "redis-credentials",
 						PasswordKey: "redis-password",
@@ -315,14 +248,34 @@ func TestRedisStatefulSet(t *testing.T) {
 		},
 		{
 			name: "persistence",
-			instance: &cachev1alpha1.Instance{
+			instance: &cachev1alpha1.RedisInstance{
 				Name:      "test",
 				Namespace: "default",
 				Spec: cachev1alpha1.InstanceSpec{
-					Image: "redis:latest",
+					Server: cachev1alpha1.ServerSpec{
+						Image: "redis:latest",
+					},
 					Persistence: &corev1.VolumeSource{
 						PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
 							ClaimName: "redis-data",
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "resources",
+			instance: &cachev1alpha1.RedisInstance{
+				Name:      "test",
+				Namespace: "default",
+				Spec: cachev1alpha1.InstanceSpec{
+					Server: cachev1alpha1.ServerSpec{
+						Image: "redis:latest",
+						Resources: &corev1.ResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("50m"),
+								corev1.ResourceMemory: resource.MustParse("64Mi"),
+							},
 						},
 					},
 				},
@@ -343,7 +296,7 @@ func TestRedisStatefulSet(t *testing.T) {
 }
 
 func TestRedisService(t *testing.T) {
-	i := &cachev1alpha1.Instance{
+	i := &cachev1alpha1.RedisInstance{
 		Name:      "test",
 		Namespace: "default",
 	}
@@ -358,28 +311,46 @@ func TestRedisService(t *testing.T) {
 func TestRedisExporterDeployment(t *testing.T) {
 	tests := []struct {
 		name     string
-		instance *cachev1alpha1.Instance
+		instance *cachev1alpha1.RedisInstance
 	}{
 		{
 			name: "no authentication",
-			instance: &cachev1alpha1.Instance{
+			instance: &cachev1alpha1.RedisInstance{
 				Name:      "test",
 				Namespace: "default",
 				Spec: cachev1alpha1.InstanceSpec{
-					Exporter: new("foo"),
+					Exporter: &cachev1alpha1.ExporterSpec{Image: "foo"},
 				},
 			},
 		},
 		{
 			name: "authentication",
-			instance: &cachev1alpha1.Instance{
+			instance: &cachev1alpha1.RedisInstance{
 				Name:      "test",
 				Namespace: "default",
 				Spec: cachev1alpha1.InstanceSpec{
-					Exporter: new("foo"),
+					Exporter: &cachev1alpha1.ExporterSpec{Image: "foo"},
 					Credentials: &cachev1alpha1.RedisCredentials{
 						SecretName:  "foo",
 						PasswordKey: "bar",
+					},
+				},
+			},
+		},
+		{
+			name: "resources",
+			instance: &cachev1alpha1.RedisInstance{
+				Name:      "test",
+				Namespace: "default",
+				Spec: cachev1alpha1.InstanceSpec{
+					Exporter: &cachev1alpha1.ExporterSpec{
+						Image: "foo",
+						Resources: &corev1.ResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("10m"),
+								corev1.ResourceMemory: resource.MustParse("16Mi"),
+							},
+						},
 					},
 				},
 			},
@@ -434,7 +405,7 @@ func newReconciler(t *testing.T, objects ...runtime.Object) *RedisInstanceReconc
 	scheme := testScheme(t)
 	b := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithStatusSubresource(&cachev1alpha1.Instance{})
+		WithStatusSubresource(&cachev1alpha1.RedisInstance{})
 	for _, obj := range objects {
 		b = b.WithRuntimeObjects(obj)
 	}
@@ -445,9 +416,13 @@ func request() reconcile.Request {
 	return reconcile.Request{Namespace: "default", Name: "cache"}
 }
 
-func instance() *cachev1alpha1.Instance {
-	return &cachev1alpha1.Instance{
+func instance() *cachev1alpha1.RedisInstance {
+	return &cachev1alpha1.RedisInstance{
 		Name: "cache", Namespace: "default",
-		Spec: cachev1alpha1.InstanceSpec{Image: "redis:8"},
+		Spec: cachev1alpha1.InstanceSpec{
+			Server: cachev1alpha1.ServerSpec{
+				Image: "redis:8",
+			},
+		},
 	}
 }

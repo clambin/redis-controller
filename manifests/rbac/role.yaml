@@ -32,7 +32,7 @@ rules:
 - apiGroups:
   - redis.agrajag.be
   resources:
-  - instances
+  - redisinstances
   verbs:
   - get
   - list
@@ -40,13 +40,13 @@ rules:
 - apiGroups:
   - redis.agrajag.be
   resources:
-  - instances/finalizers
+  - redisinstances/finalizers
   verbs:
   - update
 - apiGroups:
   - redis.agrajag.be
   resources:
-  - instances/status
+  - redisinstances/status
   verbs:
   - get
   - patch

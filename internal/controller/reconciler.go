@@ -38,7 +38,7 @@ type RedisInstanceReconciler struct {
 
 // Reconcile reads the RedisInstance and converges its child resources to the desired state.
 func (r *RedisInstanceReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
-	var redis cachev1alpha1.Instance
+	var redis cachev1alpha1.RedisInstance
 	if err := r.Get(ctx, req.NamespacedName, &redis); err != nil {
 		// NotFound means the parent was deleted. Owner references let Kubernetes GC
 		// remove its children, so there is nothing for this reconciler to do.
@@ -63,7 +63,7 @@ func (r *RedisInstanceReconciler) Reconcile(ctx context.Context, req reconcile.R
 }
 
 // reconcile converges the child resources of the RedisInstance to the desired state.
-func (r *RedisInstanceReconciler) reconcile(ctx context.Context, redis *cachev1alpha1.Instance, artifacts *artifacts) (reconcile.Result, error) {
+func (r *RedisInstanceReconciler) reconcile(ctx context.Context, redis *cachev1alpha1.RedisInstance, artifacts *artifacts) (reconcile.Result, error) {
 	artifacts.redisServer = &appsv1.StatefulSet{Name: redis.Name, Namespace: redis.Namespace}
 	if err := r.reconcileChild(ctx, redis, "redis statefulSet", artifacts.redisServer, func() { redisStatefulSet(artifacts.redisServer, redis) }); err != nil {
 		return reconcile.Result{}, err
@@ -83,7 +83,7 @@ func (r *RedisInstanceReconciler) reconcile(ctx context.Context, redis *cachev1a
 }
 
 // reconcileExporter creates or patches the exporter deployment. If no exporter is requested, any existing one is removed.
-func (r *RedisInstanceReconciler) reconcileExporter(ctx context.Context, redis *cachev1alpha1.Instance) (*appsv1.Deployment, error) {
+func (r *RedisInstanceReconciler) reconcileExporter(ctx context.Context, redis *cachev1alpha1.RedisInstance) (*appsv1.Deployment, error) {
 	exporter := &appsv1.Deployment{Name: exporterName(redis), Namespace: redis.Namespace}
 	if redis.Spec.Exporter == nil {
 		_, err := r.removeObsolete(ctx, redis, exporter)
@@ -96,7 +96,7 @@ func (r *RedisInstanceReconciler) reconcileExporter(ctx context.Context, redis *
 }
 
 // removeObsolete deletes the child of the other workload kind. It reports true only when that child is gone.
-func (r *RedisInstanceReconciler) removeObsolete(ctx context.Context, redis *cachev1alpha1.Instance, obj client.Object) (bool, error) {
+func (r *RedisInstanceReconciler) removeObsolete(ctx context.Context, redis *cachev1alpha1.RedisInstance, obj client.Object) (bool, error) {
 	key := client.ObjectKeyFromObject(obj)
 	if err := r.Get(ctx, key, obj); err != nil {
 		return true, client.IgnoreNotFound(err)
@@ -113,7 +113,7 @@ func (r *RedisInstanceReconciler) removeObsolete(ctx context.Context, redis *cac
 }
 
 // reconcileChild creates or patches a child resource of the RedisInstance. mutate sets the desired state on obj.
-func (r *RedisInstanceReconciler) reconcileChild(ctx context.Context, redis *cachev1alpha1.Instance, kind string, obj client.Object, mutate func()) error {
+func (r *RedisInstanceReconciler) reconcileChild(ctx context.Context, redis *cachev1alpha1.RedisInstance, kind string, obj client.Object, mutate func()) error {
 	log := ctrl.LoggerFrom(ctx).WithValues("kind", kind, "name", obj.GetName())
 	op, err := controllerutil.CreateOrPatch(ctx, r.Client, obj, func() error {
 		mutate()
@@ -131,7 +131,7 @@ func (r *RedisInstanceReconciler) reconcileChild(ctx context.Context, redis *cac
 }
 
 // updateStatus patches the status of the RedisInstance, if it changed.
-func (r *RedisInstanceReconciler) updateStatus(ctx context.Context, redis *cachev1alpha1.Instance, a artifacts) error {
+func (r *RedisInstanceReconciler) updateStatus(ctx context.Context, redis *cachev1alpha1.RedisInstance, a artifacts) error {
 	status := a.instanceStatus()
 	before := redis.DeepCopy()
 	previous := redis.Status.Conditions
@@ -155,14 +155,14 @@ func (r *RedisInstanceReconciler) updateStatus(ctx context.Context, redis *cache
 // SetupWithManager registers watches for the parent and its owned resources.
 func (r *RedisInstanceReconciler) SetupWithManager(mgr manager.Manager) error {
 	return builder.ControllerManagedBy(mgr).
-		For(&cachev1alpha1.Instance{}).
+		For(&cachev1alpha1.RedisInstance{}).
 		Owns(&appsv1.StatefulSet{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
 		Complete(r)
 }
 
-func redisStatefulSet(sfs *appsv1.StatefulSet, redis *cachev1alpha1.Instance) {
+func redisStatefulSet(sfs *appsv1.StatefulSet, redis *cachev1alpha1.RedisInstance) {
 	sfs.Labels = labels(redis.Name)
 	sfs.Spec.Replicas = new(int32(1))
 	sfs.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels(redis.Name)}
@@ -170,7 +170,7 @@ func redisStatefulSet(sfs *appsv1.StatefulSet, redis *cachev1alpha1.Instance) {
 }
 
 // redisPodTemplate sets the desired state on the pod template in place, so server-side defaults are preserved.
-func redisPodTemplate(tpl *corev1.PodTemplateSpec, redis *cachev1alpha1.Instance) {
+func redisPodTemplate(tpl *corev1.PodTemplateSpec, redis *cachev1alpha1.RedisInstance) {
 	tpl.Labels = labels(redis.Name)
 	tpl.Spec.RestartPolicy = corev1.RestartPolicyAlways
 	tpl.Spec.Containers = []corev1.Container{redisContainer(redis)}
@@ -180,16 +180,21 @@ func redisPodTemplate(tpl *corev1.PodTemplateSpec, redis *cachev1alpha1.Instance
 	}
 }
 
-func redisContainer(redis *cachev1alpha1.Instance) corev1.Container {
+func redisContainer(redis *cachev1alpha1.RedisInstance) corev1.Container {
 	container := corev1.Container{
 		Name:                     "redis",
-		Image:                    redis.Spec.Image,
+		Image:                    redis.Spec.Server.Image,
 		ImagePullPolicy:          corev1.PullIfNotPresent,
 		TerminationMessagePath:   corev1.TerminationMessagePathDefault,
 		TerminationMessagePolicy: corev1.TerminationMessageReadFile,
 		Ports: []corev1.ContainerPort{
 			{Name: "redis", ContainerPort: redisPort, Protocol: corev1.ProtocolTCP},
 		},
+	}
+
+	// add the resource requirements, if specified
+	if redis.Spec.Server.Resources != nil {
+		container.Resources = *redis.Spec.Server.Resources
 	}
 
 	// depending on persistence, set up the args & volume mounts
@@ -210,7 +215,7 @@ func redisContainer(redis *cachev1alpha1.Instance) corev1.Container {
 	return container
 }
 
-func redisService(svc *corev1.Service, redis *cachev1alpha1.Instance) {
+func redisService(svc *corev1.Service, redis *cachev1alpha1.RedisInstance) {
 	svc.Labels = labels(redis.Name)
 	svc.Spec.Selector = labels(redis.Name)
 	svc.Spec.Type = corev1.ServiceTypeClusterIP
@@ -219,10 +224,10 @@ func redisService(svc *corev1.Service, redis *cachev1alpha1.Instance) {
 	}
 }
 
-func redisExporterDeployment(dep *appsv1.Deployment, redis *cachev1alpha1.Instance) {
+func redisExporterDeployment(dep *appsv1.Deployment, redis *cachev1alpha1.RedisInstance) {
 	container := corev1.Container{
 		Name:                     "redis-exporter",
-		Image:                    *redis.Spec.Exporter,
+		Image:                    redis.Spec.Exporter.Image,
 		ImagePullPolicy:          corev1.PullAlways,
 		TerminationMessagePath:   corev1.TerminationMessagePathDefault,
 		TerminationMessagePolicy: corev1.TerminationMessageReadFile,
@@ -230,6 +235,11 @@ func redisExporterDeployment(dep *appsv1.Deployment, redis *cachev1alpha1.Instan
 			{Name: "metrics", ContainerPort: redisExporterPort, Protocol: corev1.ProtocolTCP},
 		},
 		Args: []string{"-redis.addr=redis://" + redis.Name + ":" + strconv.Itoa(redisPort)},
+	}
+
+	// add the resource requirements, if specified
+	if redis.Spec.Exporter.Resources != nil {
+		container.Resources = *redis.Spec.Exporter.Resources
 	}
 
 	// if credentials are required, set up the env and update the args
@@ -261,7 +271,7 @@ func passwordEnv(credentials *cachev1alpha1.RedisCredentials) []corev1.EnvVar {
 	}}
 }
 
-func exporterName(redis *cachev1alpha1.Instance) string {
+func exporterName(redis *cachev1alpha1.RedisInstance) string {
 	return redis.Name + "-exporter"
 }
 
