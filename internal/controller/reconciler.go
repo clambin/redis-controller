@@ -195,6 +195,9 @@ func redisContainer(redis *cachev1alpha1.RedisInstance) corev1.Container {
 	// add the resource requirements, if specified
 	if redis.Spec.Server.Resources != nil {
 		container.Resources = *redis.Spec.Server.Resources
+		// Dynamic Resource Allocation (DRA) is currently not supported
+		// https://kubernetes.io/docs/concepts/resource-management/dynamic-resource-allocation/
+		container.Resources.Claims = nil
 	}
 
 	// depending on persistence, set up the args & volume mounts
