@@ -60,6 +60,7 @@ type ServerSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	Image string `json:"image"`
 	// Resources defines the resource requirements for the Redis server.
+	// +kubebuilder:validation:XValidation:rule="!has(self.claims) || size(self.claims) == 0",message="DRA resource claims are not supported"
 	// +optional
 	Resources *corev1.ResourceRequirements `json:"resources"`
 }
@@ -69,6 +70,7 @@ type ExporterSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	Image string `json:"image"`
 	// Resources defines the resource requirements for the Redis exporter.
+	// +kubebuilder:validation:XValidation:rule="!has(self.claims) || size(self.claims) == 0",message="DRA resource claims are not supported"
 	// +optional
 	Resources *corev1.ResourceRequirements `json:"resources"`
 }

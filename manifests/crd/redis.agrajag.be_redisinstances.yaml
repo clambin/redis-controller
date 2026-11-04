@@ -127,6 +127,9 @@ spec:
                           More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                         type: object
                     type: object
+                    x-kubernetes-validations:
+                    - message: DRA resource claims are not supported
+                      rule: '!has(self.claims) || size(self.claims) == 0'
                 required:
                 - image
                 type: object
@@ -2187,6 +2190,9 @@ spec:
                           More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                         type: object
                     type: object
+                    x-kubernetes-validations:
+                    - message: DRA resource claims are not supported
+                      rule: '!has(self.claims) || size(self.claims) == 0'
                 required:
                 - image
                 type: object
